@@ -6,7 +6,8 @@
   "mixins": [],
   "client": [
     "ScreenInterceptorMixin",
-    "ClientPlayNetworkHandlerMixin"
+    "ClientPlayNetworkHandlerMixin",
+    "GuiMainMenuMixin"
   ],
   "injectors": {
     "defaultRequire": 1
