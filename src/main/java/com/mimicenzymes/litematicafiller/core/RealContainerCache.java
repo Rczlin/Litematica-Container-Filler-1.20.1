@@ -85,11 +85,9 @@ public class RealContainerCache {
     }
 
     public static Map<Integer, ItemStack> getCachedItems(BlockPos pos) {
-        // 1. 绝对信任 UI 亲手开箱过的本地缓存
         if (CACHE.containsKey(pos)) {
             return CACHE.get(pos);
         }
-        // 2. 绝对信任 OP 主动发包获取的缓存
         if (NBT_QUERY_CACHE.containsKey(pos)) {
             return NBT_QUERY_CACHE.get(pos);
         }
@@ -101,7 +99,7 @@ public class RealContainerCache {
 
             if (client.isInSingleplayer() && client.getServer() != null) {
                 ServerWorld serverWorld = client.getServer().getWorld(client.world.getRegistryKey());
-                if (serverWorld != null && serverWorld.isChunkLoaded(pos)) {
+                if (serverWorld != null) {
                     return getSingleplayerRealItems(pos, serverWorld, halves, state);
                 }
             }
@@ -129,30 +127,21 @@ public class RealContainerCache {
     }
 
     private static Map<Integer, ItemStack> getSingleplayerRealItems(BlockPos pos, ServerWorld serverWorld, BlockPos[] halves, BlockState state) {
-        if (halves != null) {
-            // 原版大箱子自带原生合并接口
-            if (state.getBlock() instanceof ChestBlock) {
-                Inventory inv = ChestBlock.getInventory((ChestBlock) state.getBlock(), state, serverWorld, pos, true);
-                if (inv != null) {
-                    Map<Integer, ItemStack> items = new HashMap<>();
-                    for (int i = 0; i < inv.size(); i++) {
-                        ItemStack stack = inv.getStack(i);
-                        if (stack != null && !stack.isEmpty()) items.put(i, stack.copy());
-                    }
-                    return items;
-                }
-                return null;
-            }
 
-            // 大木桶需要手动拼接两半
+        if (halves != null) {
+
             Map<Integer, ItemStack> rightHalf = getHalfChestItems(halves[0], serverWorld);
             Map<Integer, ItemStack> leftHalf = getHalfChestItems(halves[1], serverWorld);
 
             if (rightHalf != null && leftHalf != null) {
-                Map<Integer, ItemStack> combined = new HashMap<>(rightHalf);
+                Map<Integer, ItemStack> combined = new HashMap<>();
+
+                rightHalf.forEach((slot, stack) -> combined.put(slot, stack));
                 leftHalf.forEach((slot, stack) -> combined.put(slot + 27, stack));
+
                 return combined;
             }
+
             return null;
         }
 
@@ -160,25 +149,36 @@ public class RealContainerCache {
     }
 
     private static Map<Integer, ItemStack> getHalfChestItems(BlockPos pos, ServerWorld serverWorld) {
-        BlockEntity be = serverWorld.getBlockEntity(pos);
-        if (be == null) return null;
 
-        // MiniHUD 同款读取，直接强转 Inventory
+        BlockEntity be = serverWorld.getBlockEntity(pos);
+
+        if (be == null) {
+            return null;
+        }
+
         if (be instanceof Inventory inv) {
+
             Map<Integer, ItemStack> items = new HashMap<>();
+
             for (int i = 0; i < inv.size(); i++) {
+
                 ItemStack stack = inv.getStack(i);
-                if (stack != null && !stack.isEmpty()) items.put(i, stack.copy());
+
+                if (stack != null && !stack.isEmpty()) {
+                    items.put(i, stack.copy());
+                }
             }
+
             return items;
         }
 
         NbtCompound nbt = be.createNbt(serverWorld.getRegistryManager());
+
         if (nbt != null && nbt.contains("Items")) {
             return parseNbtInventory(nbt, serverWorld.getRegistryManager());
         }
 
-        return new HashMap<>();
+        return null;
     }
 
     private static Map<Integer, ItemStack> getServuxBlockEntityItems(net.minecraft.world.World world, BlockPos pos) {
@@ -305,4 +305,10 @@ public class RealContainerCache {
         PENDING_NBT_REQUESTS.clear();
         LAST_REQUEST_TIME.clear();
     }
+
+    public static void put(BlockPos pos, Map<Integer, ItemStack> items) {
+        if (pos == null || items == null) return;
+        CACHE.put(pos.toImmutable(), items);
+    }
+
 }
