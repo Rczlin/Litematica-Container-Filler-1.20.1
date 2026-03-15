@@ -12,7 +12,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ClientPlayNetworkHandler.class)
 public class ClientPlayNetworkHandlerMixin {
 
-    // 拦截服务端发回来的 OP NBT 查询结果
     @Inject(method = "onNbtQueryResponse", at = @At("HEAD"))
     private void onNbtQueryResponse(NbtQueryResponseS2CPacket packet, CallbackInfo ci) {
         if (Configs.ENABLE_OP_NBT_QUERY.getBooleanValue()) {

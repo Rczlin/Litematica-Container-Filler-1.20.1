@@ -694,12 +694,34 @@ public class AutoFillerStateMachine {
                 currentPhase = Phase.GATHERING;
                 return;
             } else {
+                if (hasAnyMaterialsToFill(client)) {
+                    currentPhase = Phase.FILLING;
+                    return;
+                }
                 abortTask(client, "litematica_container_filler.message.materials_depleted");
                 return;
             }
         }
 
         currentPhase = Phase.FILLING;
+    }
+
+    private boolean hasAnyMaterialsToFill(MinecraftClient client) {
+        Map<Integer, ItemStack> trueData = getTrueContainerData(client, currentTask.targetPos);
+        if (trueData == null) trueData = new HashMap<>();
+
+        for (int i = 0; i < 54; i++) {
+            ItemStack req = currentTask.requiredItems.getOrDefault(i, ItemStack.EMPTY);
+            ItemStack cur = trueData.getOrDefault(i, ItemStack.EMPTY);
+
+            if (!req.isEmpty()) {
+                int missing = req.getCount() - (ItemMatcher.isSameItem(req, cur) ? cur.getCount() : 0);
+                if (missing > 0 && countItemInPlayerInv(client, req) > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private List<ItemStack> computeNeededToFetch(MinecraftClient client) {
@@ -989,7 +1011,6 @@ public class AutoFillerStateMachine {
 
         boolean movedAny = false;
         boolean stillNeedsAction = false;
-        boolean outOfMaterials = false;
 
         for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
             if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
@@ -1004,13 +1025,13 @@ public class AutoFillerStateMachine {
             boolean isExcess = !curStack.isEmpty() && ItemMatcher.isSameItem(curStack, reqStack) && curStack.getCount() > reqStack.getCount();
 
             if (reqStack.isEmpty() || isWrong || isExcess) {
+                stillNeedsAction = true;
                 if (!canAbsorb(client, curStack)) {
                     triggerStashOrAbort(client);
                     return;
                 }
                 client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.QUICK_MOVE, client.player);
                 movedAny = true;
-                stillNeedsAction = true;
                 if (delay > 0) break;
                 continue;
             }
@@ -1031,8 +1052,6 @@ public class AutoFillerStateMachine {
                     fillFromPlayerInv(client, syncId, playerSlot, uiSlot, actualMissing);
                     movedAny = true;
                     if (delay > 0) break;
-                } else {
-                    outOfMaterials = true;
                 }
             }
         }
@@ -1042,10 +1061,13 @@ public class AutoFillerStateMachine {
             consecutiveFailures = 0;
             watchdogTimer = 0;
         } else {
-            if (!stillNeedsAction) {
-                finishTaskAndReturn(client);
-            } else if (outOfMaterials) {
-                abortTask(client, "litematica_container_filler.message.materials_depleted");
+            if (stillNeedsAction) {
+                if (client.currentScreen instanceof HandledScreen<?> hs) {
+                    RealContainerCache.updateFromScreen(client, hs);
+                }
+                actionQueue.add(() -> client.player.closeHandledScreen());
+                actionQueue.add(() -> actionWaitTicks = getDelay(1));
+                actionQueue.add(() -> checkAndStartGatheringOrFilling(client));
             } else {
                 finishTaskAndReturn(client);
             }
