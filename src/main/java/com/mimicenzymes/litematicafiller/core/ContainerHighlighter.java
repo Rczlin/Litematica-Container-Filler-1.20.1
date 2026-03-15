@@ -4,7 +4,6 @@ import com.mimicenzymes.litematicafiller.config.Configs;
 import fi.dy.masa.malilib.util.data.Color4f;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.CrafterBlock;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.*;
 import net.minecraft.client.util.math.MatrixStack;
@@ -14,12 +13,18 @@ import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class ContainerHighlighter {
-    private static final List<BlockPos> MISSING_LIST = new ArrayList<>();
+
+    public enum HighlightType {
+        MISSING,    // 缺少材料 (读取到了缓存且发现不匹配)
+        UNKNOWN,    // 尚未获取到缓存数据 (需要靠近或等待 Servux 同步)
+        SATISFIED   // 已完成装填
+    }
+
+    private static final Map<BlockPos, HighlightType> HIGHLIGHT_MAP = new ConcurrentHashMap<>();
     private static double lastX = 0, lastY = -100, lastZ = 0;
     private static int timer = 0;
 
@@ -39,15 +44,29 @@ public class ContainerHighlighter {
             timer = 0;
         }
 
-        if (MISSING_LIST.isEmpty()) return;
+        if (HIGHLIGHT_MAP.isEmpty()) return;
 
         Vec3d cam = context.gameRenderer().getCamera().getPos();
         MatrixStack matrices = context.matrices();
         VertexConsumerProvider consumers = context.consumers();
         VertexConsumer buffer = consumers.getBuffer(RenderLayer.getLines());
-        Color4f c = Configs.HIGHLIGHT_COLOR.getColor();
+        Color4f baseColor = Configs.HIGHLIGHT_COLOR.getColor();
 
-        for (BlockPos pos : MISSING_LIST) renderBox(matrices, buffer, pos, cam, c);
+        for (Map.Entry<BlockPos, HighlightType> entry : HIGHLIGHT_MAP.entrySet()) {
+            BlockPos pos = entry.getKey();
+            HighlightType type = entry.getValue();
+            Color4f c;
+
+            if (type == HighlightType.SATISFIED) {
+                c = new Color4f(0.2f, 1.0f, 0.2f, baseColor.a);
+            } else if (type == HighlightType.UNKNOWN) {
+                c = new Color4f(1.0f, 0.6f, 0.0f, baseColor.a);
+            } else {
+                c = baseColor;
+            }
+
+            renderBox(matrices, buffer, pos, cam, c);
+        }
 
         if (consumers instanceof VertexConsumerProvider.Immediate immediate) {
             if (Configs.HIGHLIGHT_XRAY.getBooleanValue()) GL11.glDisable(GL11.GL_DEPTH_TEST);
@@ -57,7 +76,7 @@ public class ContainerHighlighter {
     }
 
     private static void rebuildCache(MinecraftClient client, double cx, double cy, double cz) {
-        MISSING_LIST.clear();
+        HIGHLIGHT_MAP.clear();
         var schematicWorld = fi.dy.masa.litematica.world.SchematicWorldHandler.getSchematicWorld();
         if (schematicWorld == null) return;
 
@@ -79,10 +98,22 @@ public class ContainerHighlighter {
                     Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(pos, client.world.getRegistryManager());
                     boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
                     boolean hasJob = (required != null && !required.isEmpty()) || isCrafter;
+
                     if (!hasJob) continue;
-                    boolean allSatisfied = RealContainerCache.isSatisfied(pos, required);
-                    if (hideCompleted && allSatisfied) continue;
-                    MISSING_LIST.add(pos.toImmutable());
+
+                    Map<Integer, ItemStack> cached = RealContainerCache.getCachedItems(pos);
+                    HighlightType type;
+
+                    if (cached == null) {
+                        type = HighlightType.UNKNOWN;
+                    } else {
+                        boolean isSatisfied = RealContainerCache.isSatisfied(pos, required);
+                        type = isSatisfied ? HighlightType.SATISFIED : HighlightType.MISSING;
+                    }
+
+                    if (hideCompleted && type == HighlightType.SATISFIED) continue;
+
+                    HIGHLIGHT_MAP.put(pos.toImmutable(), type);
                 }
             }
         }

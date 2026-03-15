@@ -77,13 +77,16 @@ public class Callbacks implements IHotkeyCallback {
                 boolean isCrafter = schWorld.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
 
                 boolean needsLocking = isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, mc);
-                boolean hasItemsMissing = required != null && !required.isEmpty() && !RealContainerCache.isSatisfied(pos, required);
 
-                if (hasItemsMissing || needsLocking) {
-                    AutoFillerStateMachine.getInstance().addTask(pos, required == null ? new java.util.HashMap<>() : required);
-                    mc.player.sendMessage(Text.translatable("litematica_container_filler.message.task_dispatched"), true);
-                } else {
-                    mc.player.sendMessage(Text.translatable("litematica_container_filler.message.already_satisfied"), true);
+                if (required != null || needsLocking) {
+                    Map<Integer, ItemStack> taskReq = required == null ? new HashMap<>() : required;
+
+                    if (RealContainerCache.isSatisfied(pos, taskReq) && !needsLocking) {
+                        mc.player.sendMessage(Text.translatable("litematica_container_filler.message.already_satisfied"), true);
+                        return;
+                    }
+
+                    AutoFillerStateMachine.getInstance().addTask(pos, taskReq);
                 }
             } else {
                 mc.player.sendMessage(Text.translatable("litematica_container_filler.message.target_invalid"), true);

@@ -12,14 +12,41 @@ import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 public class LitematicaContainerReader {
+    public static BlockPos[] getDoubleContainerHalves(net.minecraft.world.World world, BlockPos pos, BlockState state) {
+        if (state.getBlock() instanceof ChestBlock) {
+            ChestType type = state.get(ChestBlock.CHEST_TYPE);
+            if (type != ChestType.SINGLE) {
+                Direction facing = state.get(ChestBlock.FACING);
+                Direction otherHalfDir = (type == ChestType.LEFT) ? facing.rotateYClockwise() : facing.rotateYCounterclockwise();
+                BlockPos rightPos = (type == ChestType.RIGHT) ? pos : pos.offset(otherHalfDir);
+                BlockPos leftPos = (type == ChestType.LEFT) ? pos : pos.offset(otherHalfDir);
+                return new BlockPos[]{rightPos, leftPos};
+            }
+        } else if (state.isOf(net.minecraft.block.Blocks.BARREL)) {
+            // 木桶的底部等于它的朝向的反方向
+            Direction facing = state.get(net.minecraft.block.BarrelBlock.FACING);
+            Direction bottomDir = facing.getOpposite();
+            BlockPos pos2 = pos.offset(bottomDir);
+            BlockState state2 = world.getBlockState(pos2);
+
+            // 检查与之底部相连的方块是否也是木桶，并且它的朝向刚好和当前木桶相反
+            if (state2.isOf(net.minecraft.block.Blocks.BARREL) && state2.get(net.minecraft.block.BarrelBlock.FACING) == facing.getOpposite()) {
+                // 找到相连的大木桶，通过坐标比较保证主次顺序永远一致，避免两半的物品槽位反转
+                if (pos.compareTo(pos2) < 0) {
+                    return new BlockPos[]{pos, pos2};
+                } else {
+                    return new BlockPos[]{pos2, pos};
+                }
+            }
+        }
+        return null;
+    }
 
     public static Map<Integer, ItemStack> getRequiredItems(BlockPos worldPos, RegistryWrapper.WrapperLookup registries) {
         Map<Integer, ItemStack> items = new HashMap<>();
@@ -27,26 +54,17 @@ public class LitematicaContainerReader {
         if (schematicWorld == null) return items;
 
         BlockState state = schematicWorld.getBlockState(worldPos);
+        BlockPos[] halves = getDoubleContainerHalves(schematicWorld, worldPos, state);
 
-        if (state.getBlock() instanceof ChestBlock) {
-            ChestType type = state.get(ChestBlock.CHEST_TYPE);
-            if (type != ChestType.SINGLE) {
-                Direction facing = state.get(ChestBlock.FACING);
-                Direction otherHalfDir = (type == ChestType.LEFT) ? facing.rotateYClockwise() : facing.rotateYCounterclockwise();
-                //不管传入的是哪一半，永远让ChestType.RIGHT作为上半部分(0-26)，ChestType.LEFT作为下半部分(27-53)
-                //这完美匹配了原版大箱子 GUI 的底层逻辑
-                BlockPos rightPos = (type == ChestType.RIGHT) ? worldPos : worldPos.offset(otherHalfDir);
-                BlockPos leftPos = (type == ChestType.LEFT) ? worldPos : worldPos.offset(otherHalfDir);
+        if (halves != null) {
+            Map<Integer, ItemStack> rightHalf = getSingleContainerItems(schematicWorld, halves[0], registries);
+            Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, halves[1], registries);
 
-                Map<Integer, ItemStack> rightHalf = getSingleContainerItems(schematicWorld, rightPos, registries);
-                Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, leftPos, registries);
-
-                items.putAll(rightHalf);
-                leftHalf.forEach((slot, stack) -> items.put(slot + 27, stack));
-
-                return items;
-            }
+            items.putAll(rightHalf);
+            leftHalf.forEach((slot, stack) -> items.put(slot + 27, stack));
+            return items;
         }
+
         return getSingleContainerItems(schematicWorld, worldPos, registries);
     }
 
@@ -85,6 +103,7 @@ public class LitematicaContainerReader {
         if (realEntity == null) return true;
         return !schematicLocks.equals(parseDisabledSlots(realEntity.createNbt(client.world.getRegistryManager())));
     }
+
     private static Set<Integer> parseDisabledSlots(NbtCompound nbt) {
         Set<Integer> disabledSlots = new java.util.HashSet<>();
         if (nbt != null && nbt.contains("disabled_slots")) {
