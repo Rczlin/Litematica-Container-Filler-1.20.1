@@ -17,6 +17,7 @@ import net.minecraft.screen.CrafterScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.screen.slot.SlotActionType;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.BlockHitResult;
@@ -133,28 +134,52 @@ public class AutoFillerStateMachine {
             return verifiedCache;
         }
 
-        if (client.isInSingleplayer() && client.getServer() != null && client.world != null) {
+        if (client.isInSingleplayer() && client.getServer() != null && client.world != null && client.player != null) {
 
-            ServerWorld serverWorld =
-                    client.getServer().getWorld(client.world.getRegistryKey());
+            ServerPlayerEntity serverPlayer = client.getServer().getPlayerManager().getPlayer(client.player.getUuid());
+            if (serverPlayer != null) {
+                ServerWorld serverWorld = (ServerWorld) serverPlayer.getEntityWorld();
 
-            if (serverWorld != null) {
+                if (serverWorld != null) {
+                    net.minecraft.block.BlockState clientState = client.world.getBlockState(finalPos);
+                    final BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, finalPos, clientState);
 
-                System.out.println("DEBUG pos = " + finalPos);
-                System.out.println("DEBUG blockstate = " + serverWorld.getBlockState(finalPos));
+                    client.getServer().execute(() -> {
+                        net.minecraft.block.BlockState state = serverWorld.getBlockState(finalPos);
+                        Map<Integer, ItemStack> inventoryData = null;
 
-                client.getServer().execute(() -> {
+                        if (halves != null && state.isOf(net.minecraft.block.Blocks.BARREL)) {
+                            Map<Integer, ItemStack> right = getSingleBlockEntityInventory(serverWorld, halves[0]);
+                            Map<Integer, ItemStack> left = getSingleBlockEntityInventory(serverWorld, halves[1]);
+                            if (right != null && left != null) {
+                                Map<Integer, ItemStack> combined = new HashMap<>(right);
+                                left.forEach((k, v) -> combined.put(k + 27, v));
+                                inventoryData = combined;
+                            }
+                        } else {
+                            inventoryData = getSingleBlockEntityInventory(serverWorld, finalPos);
+                        }
 
-                    Map<Integer, ItemStack> single =
-                            getSingleBlockEntityInventory(serverWorld, finalPos);
+                        if (inventoryData != null) {
+                            if (halves != null) {
+                                RealContainerCache.put(halves[0].toImmutable(), inventoryData);
+                                RealContainerCache.put(halves[1].toImmutable(), inventoryData);
+                            } else {
+                                RealContainerCache.put(finalPos, inventoryData);
+                            }
+                        }
 
-                    System.out.println("DEBUG blockentity read result = " + single);
-
-                    if (single != null) {
-                        RealContainerCache.put(finalPos, single);
-                    }
-
-                });
+                        // 核心修复：顺手将合成器的锁定槽位穿透获取，并直接注入锁定缓存中
+                        if (state.getBlock() instanceof net.minecraft.block.CrafterBlock) {
+                            net.minecraft.block.entity.BlockEntity be = serverWorld.getBlockEntity(finalPos);
+                            if (be != null) {
+                                net.minecraft.nbt.NbtCompound nbt = be.createNbt(serverWorld.getRegistryManager());
+                                Set<Integer> locks = RealContainerCache.parseDisabledSlots(nbt);
+                                RealContainerCache.putLock(finalPos, locks);
+                            }
+                        }
+                    });
+                }
             }
         }
 
@@ -166,24 +191,18 @@ public class AutoFillerStateMachine {
 
         return fallback;
     }
+
     private Map<Integer, ItemStack> getSingleBlockEntityInventory(net.minecraft.server.world.ServerWorld world, BlockPos pos) {
-
-        System.out.println("DEBUG checking BE at pos = " + pos);
-
         net.minecraft.block.entity.BlockEntity be = world.getBlockEntity(pos);
-        System.out.println("DEBUG blockentity = " + be);
 
         if (be == null) {
             return null;
         }
 
         net.minecraft.inventory.Inventory inv = null;
-
         net.minecraft.block.BlockState state = world.getBlockState(pos);
 
-        // 1️⃣ 优先处理箱子（支持双箱）
         if (state.getBlock() instanceof net.minecraft.block.ChestBlock chest) {
-
             inv = net.minecraft.block.ChestBlock.getInventory(
                     chest,
                     state,
@@ -191,42 +210,26 @@ public class AutoFillerStateMachine {
                     pos,
                     true
             );
-
-            System.out.println("DEBUG chest inventory via ChestBlock API = " + inv);
         }
 
-        // 2️⃣ fallback：普通容器
         if (inv == null && be instanceof net.minecraft.inventory.Inventory inventory) {
             inv = inventory;
-            System.out.println("DEBUG fallback inventory = " + inv);
         }
 
-        // 3️⃣ 读取 Inventory
         if (inv != null) {
-
             Map<Integer, ItemStack> map = new HashMap<>();
-
             for (int i = 0; i < inv.size(); i++) {
-
                 ItemStack stack = inv.getStack(i);
-
-                System.out.println("DEBUG slot " + i + " = " + stack);
-
                 if (!stack.isEmpty()) {
                     map.put(i, stack.copy());
                 }
             }
-
             return map;
         }
 
-        // 4️⃣ NBT fallback
         net.minecraft.nbt.NbtCompound nbt = be.createNbt(world.getRegistryManager());
 
         if (nbt != null && nbt.contains("Items")) {
-
-            System.out.println("DEBUG reading inventory via NBT");
-
             return RealContainerCache.parseNbtInventory(nbt, world.getRegistryManager());
         }
 
@@ -256,7 +259,6 @@ public class AutoFillerStateMachine {
     }
 
     public void addTask(BlockPos pos, Map<Integer, ItemStack> requiredItems) {
-        // 核心修复 1：如果蓝图里的箱子本来就是空的，直接无视！绝不去开箱子探路！
         if (requiredItems == null || requiredItems.isEmpty()) {
             return;
         }
@@ -303,6 +305,12 @@ public class AutoFillerStateMachine {
             } else if (cur.getCount() > req.getCount()) {
                 needsAction = true;
             }
+        }
+
+        // 核心修复：即使物品全对，如果合成器的禁用槽位对不上，依然必须激活任务去改锁！
+        boolean isCrafter = client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
+        if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, client)) {
+            needsAction = true;
         }
 
         if (!needsAction) return;
@@ -522,6 +530,12 @@ public class AutoFillerStateMachine {
                             }
                         }
 
+                        // 核心修复：检查合成器锁
+                        boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
+                        if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
+                            needsAction = true;
+                        }
+
                         if (!needsAction) {
                             sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
                             reset();
@@ -637,6 +651,12 @@ public class AutoFillerStateMachine {
                 }
             }
 
+            // 核心修复：检查合成器锁
+            boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
+            if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
+                needsAction = true;
+            }
+
             if (!needsAction) {
                 sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
                 reset();
@@ -654,7 +674,7 @@ public class AutoFillerStateMachine {
 
     private void checkAndStartGatheringOrFilling(MinecraftClient client) {
         if (currentTask.missingItems.isEmpty()) {
-            currentPhase = Phase.FILLING;
+            currentPhase = Phase.FILLING; // 没有缺少材料，只是去清理杂物或改锁，直接去装填阶段
             return;
         }
 
@@ -678,7 +698,6 @@ public class AutoFillerStateMachine {
                 currentPhase = Phase.GATHERING;
                 return;
             } else {
-                // 核心修复 2：彻底切断无头苍蝇般的死循环找货，如果压根没材料，立刻掐断任务不许开箱！
                 abortTask(client, "litematica_container_filler.message.materials_depleted");
                 return;
             }
@@ -1030,7 +1049,6 @@ public class AutoFillerStateMachine {
             if (!stillNeedsAction) {
                 finishTaskAndReturn(client);
             } else if (outOfMaterials) {
-                // 核心修复 3：不再盲目鬼畜开箱 3 次，只要断货，立刻无情斩断任务并报错！
                 abortTask(client, "litematica_container_filler.message.materials_depleted");
             } else {
                 finishTaskAndReturn(client);

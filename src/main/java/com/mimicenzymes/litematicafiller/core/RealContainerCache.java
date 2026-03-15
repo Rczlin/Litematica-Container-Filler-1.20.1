@@ -220,11 +220,21 @@ public class RealContainerCache {
                     items = parseNbtInventory(nbt, client.world.getRegistryManager());
                 }
                 NBT_QUERY_CACHE.put(pos.toImmutable(), items);
+
+                // 核心修复：截获并同步合成器的锁定状态
+                if (nbt.contains("disabled_slots")) {
+                    LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
+                }
             }
         }
     }
 
     public static Set<Integer> getCachedLocks(BlockPos pos) { return LOCK_CACHE.get(pos); }
+
+    public static void putLock(BlockPos pos, Set<Integer> locks) {
+        if (pos == null || locks == null) return;
+        LOCK_CACHE.put(pos.toImmutable(), locks);
+    }
 
     public static boolean isSatisfied(BlockPos pos, Map<Integer, ItemStack> required) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -296,6 +306,26 @@ public class RealContainerCache {
             }
         }
         return items;
+    }
+
+    public static Set<Integer> parseDisabledSlots(NbtCompound nbt) {
+        Set<Integer> disabledSlots = new HashSet<>();
+        if (nbt != null && nbt.contains("disabled_slots")) {
+            NbtElement elem = nbt.get("disabled_slots");
+            if (elem instanceof NbtList list) {
+                for (int i = 0; i < list.size(); i++) {
+                    if (list.get(i) instanceof net.minecraft.nbt.AbstractNbtNumber num) {
+                        disabledSlots.add(num.intValue());
+                    }
+                }
+            }
+            else if (elem instanceof net.minecraft.nbt.NbtIntArray intArray) {
+                for (int val : intArray.getIntArray()) {
+                    disabledSlots.add(val);
+                }
+            }
+        }
+        return disabledSlots;
     }
 
     public static void clear() {
