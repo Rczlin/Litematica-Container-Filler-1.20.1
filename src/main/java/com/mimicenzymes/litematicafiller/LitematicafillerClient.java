@@ -5,6 +5,7 @@ import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.config.GuiConfigs;
 import com.mimicenzymes.litematicafiller.core.*;
 import com.mimicenzymes.litematicafiller.input.InputHandler;
+import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
 
 import fi.dy.masa.malilib.config.ConfigManager;
 import fi.dy.masa.malilib.event.InitializationHandler;
@@ -32,6 +33,8 @@ public class LitematicafillerClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        ServuxSyncHandler.registerPayloads();
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!isGuiAutoRegistered) {
                 boolean isTitleScreen = client.currentScreen != null && client.currentScreen.getClass().getSimpleName().equals("TitleScreen");
@@ -51,9 +54,11 @@ public class LitematicafillerClient implements ClientModInitializer {
                 LitematicaChangeListener.tick(client);
                 RealContainerCache.tick(client);
 
+                ContainerHighlighter.tick(client);
+
                 if (Configs.CONTINUOUS_FILL.getBooleanValue() && AutoFillerStateMachine.getInstance().isIdle()) {
                     printerTickTimer++;
-                    if (printerTickTimer >= 10) { //每0.5秒判定一次
+                    if (printerTickTimer >= 10) {
                         printerTickTimer = 0;
 
                         if (Configs.AREA_MODE.getBooleanValue()) {
@@ -102,7 +107,6 @@ public class LitematicafillerClient implements ClientModInitializer {
             configHandler.load();
             ConfigManager.getInstance().registerConfigHandler(LitematicafillerClient.MOD_ID, configHandler);
             InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
-
         }
     }
 }

@@ -1,12 +1,10 @@
 package com.mimicenzymes.litematicafiller.core;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
+import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
 import net.minecraft.block.BlockState;
-import net.minecraft.block.ChestBlock;
-import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.inventory.Inventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -16,10 +14,8 @@ import net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
-import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -85,128 +81,33 @@ public class RealContainerCache {
     }
 
     public static Map<Integer, ItemStack> getCachedItems(BlockPos pos) {
-        if (CACHE.containsKey(pos)) {
-            return CACHE.get(pos);
-        }
-        if (NBT_QUERY_CACHE.containsKey(pos)) {
-            return NBT_QUERY_CACHE.get(pos);
-        }
+        if (CACHE.containsKey(pos)) return CACHE.get(pos);
+        if (NBT_QUERY_CACHE.containsKey(pos)) return NBT_QUERY_CACHE.get(pos);
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world != null) {
-            BlockState state = client.world.getBlockState(pos);
-            BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, pos, state);
-
-            if (client.isInSingleplayer() && client.getServer() != null) {
-                ServerWorld serverWorld = client.getServer().getWorld(client.world.getRegistryKey());
-                if (serverWorld != null) {
-                    return getSingleplayerRealItems(pos, serverWorld, halves, state);
-                }
-            }
-            else if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
-                if (halves != null) {
-                    Map<Integer, ItemStack> rightHalf = getServuxBlockEntityItems(client.world, halves[0]);
-                    Map<Integer, ItemStack> leftHalf = getServuxBlockEntityItems(client.world, halves[1]);
-
-                    if (rightHalf != null && leftHalf != null) {
-                        Map<Integer, ItemStack> combined = new HashMap<>(rightHalf);
-                        leftHalf.forEach((slot, stack) -> combined.put(slot + 27, stack));
-                        return combined;
-                    } else {
-                        if (rightHalf == null) requestContainerData(halves[0]);
-                        if (leftHalf == null) requestContainerData(halves[1]);
-                    }
-                } else {
-                    Map<Integer, ItemStack> items = getServuxBlockEntityItems(client.world, pos);
-                    if (items != null) return items;
-                    requestContainerData(pos);
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Map<Integer, ItemStack> getSingleplayerRealItems(BlockPos pos, ServerWorld serverWorld, BlockPos[] halves, BlockState state) {
-
-        if (halves != null) {
-
-            Map<Integer, ItemStack> rightHalf = getHalfChestItems(halves[0], serverWorld);
-            Map<Integer, ItemStack> leftHalf = getHalfChestItems(halves[1], serverWorld);
-
-            if (rightHalf != null && leftHalf != null) {
-                Map<Integer, ItemStack> combined = new HashMap<>();
-
-                rightHalf.forEach((slot, stack) -> combined.put(slot, stack));
-                leftHalf.forEach((slot, stack) -> combined.put(slot + 27, stack));
-
-                return combined;
-            }
-
-            return null;
-        }
-
-        return getHalfChestItems(pos, serverWorld);
-    }
-
-    private static Map<Integer, ItemStack> getHalfChestItems(BlockPos pos, ServerWorld serverWorld) {
-
-        BlockEntity be = serverWorld.getBlockEntity(pos);
-
-        if (be == null) {
-            return null;
-        }
-
-        if (be instanceof Inventory inv) {
-
-            Map<Integer, ItemStack> items = new HashMap<>();
-
-            for (int i = 0; i < inv.size(); i++) {
-
-                ItemStack stack = inv.getStack(i);
-
-                if (stack != null && !stack.isEmpty()) {
-                    items.put(i, stack.copy());
-                }
-            }
-
-            return items;
-        }
-
-        NbtCompound nbt = be.createNbt(serverWorld.getRegistryManager());
-
-        if (nbt != null && nbt.contains("Items")) {
-            return parseNbtInventory(nbt, serverWorld.getRegistryManager());
-        }
+        Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(pos);
+        if (servuxData != null) return servuxData;
 
         return null;
     }
 
-    private static Map<Integer, ItemStack> getServuxBlockEntityItems(net.minecraft.world.World world, BlockPos pos) {
-        BlockEntity be = world.getBlockEntity(pos);
-        if (be != null) {
-            NbtCompound nbt = be.createNbt(world.getRegistryManager());
-            if (nbt != null && nbt.contains("Items")) {
-                return parseNbtInventory(nbt, world.getRegistryManager());
+    public static void requestContainerData(BlockPos pos) {
+        long now = System.currentTimeMillis();
+        if (now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < 2000) return;
+        LAST_REQUEST_TIME.put(pos, now);
+
+        if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
+            if (ServuxSyncHandler.requestData(pos)) {
+                return;
             }
         }
-        return null;
-    }
 
-    private static void requestContainerData(BlockPos pos) {
         if (!Configs.ENABLE_OP_NBT_QUERY.getBooleanValue()) return;
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.getNetworkHandler() == null) return;
         if (!client.player.hasPermissionLevel(2)) return;
 
-        long now = System.currentTimeMillis();
-        if (now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < 5000) {
-            return;
-        }
-
         int id = transactionCounter++;
         PENDING_NBT_REQUESTS.put(id, pos);
-        LAST_REQUEST_TIME.put(pos, now);
-
         client.getNetworkHandler().sendPacket(new QueryBlockNbtC2SPacket(id, pos));
     }
 
@@ -221,7 +122,6 @@ public class RealContainerCache {
                 }
                 NBT_QUERY_CACHE.put(pos.toImmutable(), items);
 
-                // 核心修复：截获并同步合成器的锁定状态
                 if (nbt.contains("disabled_slots")) {
                     LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
                 }
@@ -334,11 +234,11 @@ public class RealContainerCache {
         NBT_QUERY_CACHE.clear();
         PENDING_NBT_REQUESTS.clear();
         LAST_REQUEST_TIME.clear();
+        ServuxSyncHandler.INDEPENDENT_CACHE.clear();
     }
 
     public static void put(BlockPos pos, Map<Integer, ItemStack> items) {
         if (pos == null || items == null) return;
         CACHE.put(pos.toImmutable(), items);
     }
-
 }

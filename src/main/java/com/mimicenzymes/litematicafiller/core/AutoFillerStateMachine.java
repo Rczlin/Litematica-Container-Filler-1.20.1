@@ -169,7 +169,6 @@ public class AutoFillerStateMachine {
                             }
                         }
 
-                        // 核心修复：顺手将合成器的锁定槽位穿透获取，并直接注入锁定缓存中
                         if (state.getBlock() instanceof net.minecraft.block.CrafterBlock) {
                             net.minecraft.block.entity.BlockEntity be = serverWorld.getBlockEntity(finalPos);
                             if (be != null) {
@@ -307,7 +306,6 @@ public class AutoFillerStateMachine {
             }
         }
 
-        // 核心修复：即使物品全对，如果合成器的禁用槽位对不上，依然必须激活任务去改锁！
         boolean isCrafter = client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
         if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, client)) {
             needsAction = true;
@@ -530,7 +528,6 @@ public class AutoFillerStateMachine {
                             }
                         }
 
-                        // 核心修复：检查合成器锁
                         boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
                         if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
                             needsAction = true;
@@ -651,7 +648,6 @@ public class AutoFillerStateMachine {
                 }
             }
 
-            // 核心修复：检查合成器锁
             boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
             if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
                 needsAction = true;
@@ -674,7 +670,7 @@ public class AutoFillerStateMachine {
 
     private void checkAndStartGatheringOrFilling(MinecraftClient client) {
         if (currentTask.missingItems.isEmpty()) {
-            currentPhase = Phase.FILLING; // 没有缺少材料，只是去清理杂物或改锁，直接去装填阶段
+            currentPhase = Phase.FILLING;
             return;
         }
 
