@@ -1,7 +1,7 @@
 {
-  "litematica_container_filler.gui.title.configs": "容器填充机配置",
-  "litematica_container_filler.gui.button.feature": "功能设置",
-  "litematica_container_filler.gui.button.hotkeys": "热键绑定",
+  "litematica_container_filler.gui.title.configs": "容器填充机设置",
+  "litematica_container_filler.gui.button.feature": "功能",
+  "litematica_container_filler.gui.button.hotkeys": "热键",
   "litematica_container_filler.config.name.enableMod": "启用模组",
   "litematica_container_filler.config.name.continuousFill": "持续填充",
   "litematica_container_filler.config.name.areaMode": "范围填充模式",
