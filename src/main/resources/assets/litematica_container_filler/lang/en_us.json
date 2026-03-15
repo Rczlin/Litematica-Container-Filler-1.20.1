@@ -17,12 +17,12 @@
   "litematica_container_filler.config.name.autoStashItems": "Auto Stash Junk",
   "litematica_container_filler.config.name.enableOpNbtQuery": "Use OP Perms for Data",
 
-  "litematica_container_filler.config.name.highlightColorUnfilled": "Color: Unfilled (Blue)",
-  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Misplaced (Yellow)",
-  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Extra (Pink)",
-  "litematica_container_filler.config.name.highlightColorWrong": "Color: Wrong Item (Red)",
-  "litematica_container_filler.config.name.highlightColorSatisfied": "Color: Satisfied (Green)",
-  "litematica_container_filler.config.name.highlightColorUnknown": "Color: Unknown Data (Orange)",
+  "litematica_container_filler.config.name.highlightColorUnfilled": "Color: Unfilled",
+  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Misplaced",
+  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Extra",
+  "litematica_container_filler.config.name.highlightColorWrong": "Color: Wrong Item",
+  "litematica_container_filler.config.name.highlightColorSatisfied": "Color: Satisfied",
+  "litematica_container_filler.config.name.highlightColorUnknown": "Color: Unknown Data",
 
   "litematica_container_filler.config.comment.enableMod": "Enable or disable the core features of the container filler mod.",
   "litematica_container_filler.config.comment.continuousFill": "When enabled, the mod will automatically and continuously search for under-stocked containers and fill them in the background.",
