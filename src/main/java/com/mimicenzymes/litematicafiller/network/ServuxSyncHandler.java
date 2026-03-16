@@ -50,7 +50,7 @@ public class ServuxSyncHandler {
     public static Map<Integer, ItemStack> getCachedData(BlockPos pos) {
         checkMinihud();
 
-        // 1. 寄生截胡：偷取 MiniHUD 内存池
+        // 偷你缓存气不气
         if (hasMinihud) {
             try {
                 Class<?> cacheClass = Class.forName("fi.dy.masa.minihud.inventory.InventoryCache");

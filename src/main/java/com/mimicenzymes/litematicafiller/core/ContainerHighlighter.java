@@ -19,12 +19,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ContainerHighlighter {
 
     public enum HighlightType {
-        UNFILLED,    // 蓝色 - 完全未填充
-        PARTIAL,     // 黄色 - 填充没完成或格子不对
-        OVERFILLED,  // 粉色 - 填多了 / 有多余杂物
-        WRONG_ITEM,  // 红色 - 填错了物品
-        UNKNOWN,     // 橙色 - 数据未知 / 正在同步
-        SATISFIED    // 绿色 - 完美满足
+        UNFILLED,    // 完全未填充
+        PARTIAL,     // 填充没完成或格子不对
+        OVERFILLED,  // 填多了 / 有多余杂物
+        WRONG_ITEM,  // 填错了物品
+        UNKNOWN,     // 数据未知 / 正在同步
+        SATISFIED    // 完美满足
     }
 
     private static final Map<BlockPos, HighlightType> HIGHLIGHT_MAP = new ConcurrentHashMap<>();
@@ -33,7 +33,7 @@ public class ContainerHighlighter {
     private static int scanIndex = 0;
     private static int currentRadius = 0;
     private static BlockPos currentCenter = null;
-    private static final int BLOCKS_PER_TICK = 5000; // 每刻最大扫描方块数，彻底杜绝掉帧
+    private static final int BLOCKS_PER_TICK = 5000;
 
     public static void tick(MinecraftClient client) {
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
