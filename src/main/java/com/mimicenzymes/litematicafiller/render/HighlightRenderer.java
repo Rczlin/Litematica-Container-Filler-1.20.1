@@ -42,7 +42,7 @@ public class HighlightRenderer {
                     String name = m.getName();
                     String retName = m.getReturnType().getSimpleName();
                     if (name.equals("build") || name.equals("end") || name.equals("buildOrThrow") || retName.contains("Mesh") || retName.contains("Built")) {
-                        m.setAccessible(true); // 【核心破解】强行突破 private 限制！
+                        m.setAccessible(true);
                         meshData = m.invoke(buffer);
                         if (meshData != null) break;
                     }
@@ -83,7 +83,7 @@ public class HighlightRenderer {
         } catch (Throwable e) {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player != null && client.world != null) {
-                if (client.world.getTime() % 60 == 0) { // 每 3 秒发一次，防止刷屏卡死
+                if (client.world.getTime() % 60 == 0) {
                     client.player.sendMessage(net.minecraft.text.Text.literal("§c[容器填充机] 渲染错误: " + e.getMessage()), false);
                 }
             }
