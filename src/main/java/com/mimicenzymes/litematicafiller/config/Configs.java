@@ -46,7 +46,7 @@ public class Configs {
             // 数据
             ENABLE_DATA_SYNC, ENABLE_OP_NBT_QUERY,
             // 物流
-            ENABLE_QS_EXTRACTION, AUTO_STASH_ITEMS,
+            ENABLE_QS_EXTRACTION, AUTO_STASH_ITEMS,ENABLE_SAFETY_DELAY,
             // 渲染
             HIGHLIGHT_CONTAINERS, HIGHLIGHT_XRAY, RENDER_RADIUS, SYNC_LITE_LAYER, HIDE_COMPLETED_CONTAINERS,
             // 颜色
