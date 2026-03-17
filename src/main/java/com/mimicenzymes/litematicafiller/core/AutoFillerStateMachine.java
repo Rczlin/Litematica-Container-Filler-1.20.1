@@ -106,6 +106,9 @@ public class AutoFillerStateMachine {
     }
 
     private int getDelay(int baseTicks) {
+        if (!Configs.ENABLE_SAFETY_DELAY.getBooleanValue()) {
+            return 0;
+        }
         return baseTicks + Configs.FILL_DELAY.getIntegerValue();
     }
 
@@ -355,7 +358,7 @@ public class AutoFillerStateMachine {
                 sb.append(item.getName().getString());
                 count++;
                 if (count >= 3 && missingTypes.size() > 3) {
-                    sb.append(" 等");
+                    sb.append(Text.translatable("litematica_container_filler.message.etc").getString());
                     break;
                 }
             }
@@ -980,7 +983,7 @@ public class AutoFillerStateMachine {
 
     private void executeBurstFill(MinecraftClient client, ScreenHandler handler) {
         int syncId = handler.syncId;
-        int delay = Configs.FILL_DELAY.getIntegerValue();
+        int delay = Configs.ENABLE_SAFETY_DELAY.getBooleanValue() ? Configs.FILL_DELAY.getIntegerValue() : 0;
 
         if (!handler.getCursorStack().isEmpty()) {
             if (!tryPlaceCursorItem(client, handler)) {

@@ -81,5 +81,8 @@
   "litematica_container_filler.message.inventory_full_stash_disabled": "§c[容器填充] 背包已满且已禁用自动腾空间，无法继续提取。",
   "litematica_container_filler.message.fill_completed": "§a[容器填充] 目标容器填充完成！",
   "litematica_container_filler.message.returning_items": "§e[容器填充] 正在处理多余材料及取回暂存的杂物...",
-  "litematica_container_filler.message.container_timeout": "§c[容器填充] 容器响应超时，已中断操作以保护您的操作流。"
+  "litematica_container_filler.message.container_timeout": "§c[容器填充] 容器响应超时，已中断操作以保护您的操作流。",
+  "litematica_container_filler.config.name.enableSafetyDelay": "启用安全延迟",
+  "litematica_container_filler.config.comment.enableSafetyDelay": "关闭此项，机器将无视延迟以极限速度填充 (可能导致卡bug或被服务器踢出)。\n请谨慎关闭",
+  "litematica_container_filler.message.etc": " 等"
 }

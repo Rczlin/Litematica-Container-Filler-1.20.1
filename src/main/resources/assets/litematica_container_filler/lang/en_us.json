@@ -81,5 +81,8 @@
   "litematica_container_filler.message.inventory_full_stash_disabled": "§c[Container Filler] Inventory full and auto-stash disabled, cannot extract.",
   "litematica_container_filler.message.fill_completed": "§a[Container Filler] Target container filling completed!",
   "litematica_container_filler.message.returning_items": "§e[Container Filler] Processing extra materials and retrieving stashed junk...",
-  "litematica_container_filler.message.container_timeout": "§c[Container Filler] Container response timeout, operation aborted to protect your workflow."
+  "litematica_container_filler.message.container_timeout": "§c[Container Filler] Container response timeout, operation aborted to protect your workflow.",
+  "litematica_container_filler.config.name.enableSafetyDelay": "Enable Safety Delay",
+  "litematica_container_filler.config.comment.enableSafetyDelay": "Disabling this will make the machine ignore all delays and fill at maximum speed (may cause bugs or result in a server kick).\nUse with caution.",
+  "litematica_container_filler.message.etc": " etc."
 }

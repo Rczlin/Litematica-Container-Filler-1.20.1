@@ -23,7 +23,7 @@ public class Configs {
     //自动物流设置
     public static final ConfigBoolean ENABLE_QS_EXTRACTION = new ConfigBoolean("litematica_container_filler.config.name.enableQsExtraction", true, "litematica_container_filler.config.comment.enableQsExtraction");
     public static final ConfigBoolean AUTO_STASH_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.autoStashItems", true, "litematica_container_filler.config.comment.autoStashItems");
-
+    public static final ConfigBoolean ENABLE_SAFETY_DELAY = new ConfigBoolean("litematica_container_filler.config.name.enableSafetyDelay", true, "litematica_container_filler.config.comment.enableSafetyDelay");
     //高亮渲染基础设置
     public static final ConfigBoolean HIGHLIGHT_CONTAINERS = new ConfigBoolean("litematica_container_filler.config.name.highlightContainers", true, "litematica_container_filler.config.comment.highlightContainers");
     public static final ConfigBoolean HIGHLIGHT_XRAY = new ConfigBoolean("litematica_container_filler.config.name.highlightXray", true, "litematica_container_filler.config.comment.highlightXray");
