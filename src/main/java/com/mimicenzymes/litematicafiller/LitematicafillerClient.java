@@ -14,7 +14,7 @@ import fi.dy.masa.malilib.interfaces.IInitializationHandler;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.HitResult;
@@ -53,7 +53,6 @@ public class LitematicafillerClient implements ClientModInitializer {
                 AutoFillerStateMachine.getInstance().tick(client);
                 LitematicaChangeListener.tick(client);
                 RealContainerCache.tick(client);
-
                 ContainerHighlighter.tick(client);
 
                 if (Configs.CONTINUOUS_FILL.getBooleanValue() && AutoFillerStateMachine.getInstance().isIdle()) {
@@ -92,11 +91,12 @@ public class LitematicafillerClient implements ClientModInitializer {
             }
         });
 
-        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+        WorldRenderEvents.LAST.register(context -> {
             if (com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) {
-                ContainerHighlighter.onRender(context);
+                com.mimicenzymes.litematicafiller.core.ContainerHighlighter.onRender(context.matrixStack());
             }
         });
+
         InitializationHandler.getInstance().registerInitializationHandler(new InitHandler());
     }
 

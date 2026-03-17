@@ -11,6 +11,6 @@ public class ContainerHighlighter {
     }
 
     public static void onRender(Object context) {
-        HighlightRenderer.getInstance().render();
+        HighlightRenderer.getInstance().render(context);
     }
 }
