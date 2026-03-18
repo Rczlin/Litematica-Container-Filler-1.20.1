@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "litematica_container_filler",
-  "version": "0.6.1",
+  "version": "0.7",
   "name": "投影容器填充机",
   "description": "自动投影容器填充模组",
   "authors": ["MimicEnzymes"],
