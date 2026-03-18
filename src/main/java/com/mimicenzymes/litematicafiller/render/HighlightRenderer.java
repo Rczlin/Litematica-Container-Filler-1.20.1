@@ -16,10 +16,6 @@ import org.lwjgl.opengl.GL11;
 
 import java.util.Map;
 
-/**
- * 1.21.1 原生满分渲染器
- * 完全复刻 Masa Litematica 源码，完美解决乱飞、不透视、线太细的全部问题
- */
 public class HighlightRenderer {
     private static final HighlightRenderer INSTANCE = new HighlightRenderer();
     public static HighlightRenderer getInstance() { return INSTANCE; }
@@ -41,7 +37,6 @@ public class HighlightRenderer {
             RenderSystem.defaultBlendFunc();
             RenderSystem.disableCull();
 
-            // 2. 完美开启透视 X-Ray（照抄 Masa renderSchematicMismatches 中的写法）
             if (xray) {
                 RenderSystem.disableDepthTest();
                 RenderSystem.depthMask(false);
@@ -50,19 +45,14 @@ public class HighlightRenderer {
                 RenderSystem.depthMask(true);
             }
 
-            // 动态加粗线条，根据屏幕分辨率自适应
             float lineWidth = Math.max(2.5F, (float)client.getWindow().getFramebufferWidth() / 1920.0F * 2.5F);
             RenderSystem.lineWidth(lineWidth);
 
-            // 3. 召唤 Tessellator 并开启线框绘制
             Tessellator tessellator = Tessellator.getInstance();
             BufferBuilder buffer = tessellator.begin(VertexFormat.DrawMode.DEBUG_LINES, VertexFormats.POSITION_COLOR);
 
-            // 【核心修复：Masa 的标准施法前摇】
             RenderSystem.setShader(GameRenderer::getPositionColorProgram);
             try {
-                // 等效于 Masa 的 RenderSystem.applyModelViewMatrix();
-                // 确保底层着色器应用正确的相机视角矩阵，杜绝线框满天乱飞！
                 java.lang.reflect.Method applyMatrix = RenderSystem.class.getMethod("applyModelViewMatrix");
                 applyMatrix.invoke(null);
             } catch (Exception e1) {
@@ -72,13 +62,11 @@ public class HighlightRenderer {
                 } catch (Exception e2) {}
             }
 
-            // 注入坐标
             for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
                 Color4f c = getColor(entry.getValue());
                 drawBoxBatched(entry.getKey(), c, 0.005, buffer, client);
             }
 
-            // 4. 反射执行构建与绘制（摇号抽奖，100% 安全适配各版本的映射名）
             Object meshData = null;
             for (java.lang.reflect.Method m : buffer.getClass().getMethods()) {
                 if (m.getParameterCount() == 0) {
@@ -113,7 +101,6 @@ public class HighlightRenderer {
                     targetMethod.invoke(null, meshData);
                 }
 
-                // 释放内存
                 for (java.lang.reflect.Method m : meshData.getClass().getMethods()) {
                     if (m.getName().equals("close") && m.getParameterCount() == 0) {
                         m.invoke(meshData);
@@ -122,7 +109,6 @@ public class HighlightRenderer {
                 }
             }
 
-            // 5. 恢复游戏全局状态，以免弄坏别的 UI
             RenderSystem.lineWidth(1.0F);
             RenderSystem.depthMask(true);
             if (xray) {
@@ -138,8 +124,6 @@ public class HighlightRenderer {
     }
 
     private void drawBoxBatched(BlockPos pos, Color4f color, double expand, BufferBuilder buffer, MinecraftClient mc) {
-        // 完全抄写 Masa Litematica 中的算坐标方式：
-        // 算出纯正的世界物理相对坐标，不进行任何矩阵乘法，把它直接交给 MaLiLib 去画！
         Vec3d cameraPos = mc.gameRenderer.getCamera().getPos();
         final double dx = cameraPos.x;
         final double dy = cameraPos.y;
@@ -152,7 +136,6 @@ public class HighlightRenderer {
         float maxY = (float) (pos.getY() - dy + expand + 1);
         float maxZ = (float) (pos.getZ() - dz + expand + 1);
 
-        // 调用 MaLiLib 的原生大杀器：底层自动批处理画边框
         fi.dy.masa.malilib.render.RenderUtils.drawBoxAllEdgesBatchedLines(minX, minY, minZ, maxX, maxY, maxZ, color, buffer);
     }
 
