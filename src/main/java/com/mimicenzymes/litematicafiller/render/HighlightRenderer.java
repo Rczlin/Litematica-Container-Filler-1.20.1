@@ -4,7 +4,6 @@ import com.mimicenzymes.litematicafiller.config.Configs;
 import fi.dy.masa.malilib.util.Color4f;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
@@ -32,7 +31,6 @@ public class HighlightRenderer {
 
             boolean xray = Configs.HIGHLIGHT_XRAY.getBooleanValue();
 
-            // 1. 设置基础 OpenGL 状态
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
             RenderSystem.disableCull();
