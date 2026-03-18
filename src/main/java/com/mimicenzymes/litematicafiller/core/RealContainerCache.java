@@ -10,12 +10,12 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket;
 import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockPos;
+
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -40,17 +40,22 @@ public class RealContainerCache {
         }
 
         if (client.currentScreen instanceof HandledScreen<?> screen) {
-            updateFromScreen(client, screen);
+            updateFromHandler(client, screen.getScreenHandler());
         }
     }
 
     public static void updateFromScreen(MinecraftClient client, HandledScreen<?> screen) {
+        if (screen != null) {
+            updateFromHandler(client, screen.getScreenHandler());
+        }
+    }
+
+    public static void updateFromHandler(MinecraftClient client, ScreenHandler handler) {
         BlockPos pos = AutoFillerStateMachine.getInstance().getCurrentTaskPos();
         if (pos == null) pos = lastLookedPos;
-        if (pos == null) return;
+        if (pos == null || handler == null) return;
 
         Map<Integer, ItemStack> items = new HashMap<>();
-        ScreenHandler handler = screen.getScreenHandler();
 
         for (Slot slot : handler.slots) {
             if (slot.inventory != null && slot.inventory != client.player.getInventory()) {
@@ -82,12 +87,35 @@ public class RealContainerCache {
 
     public static Map<Integer, ItemStack> getCachedItems(BlockPos pos) {
         if (CACHE.containsKey(pos)) return CACHE.get(pos);
-        if (NBT_QUERY_CACHE.containsKey(pos)) return NBT_QUERY_CACHE.get(pos);
+
+        var schematicWorld = fi.dy.masa.litematica.world.SchematicWorldHandler.getSchematicWorld();
+        if (schematicWorld != null) {
+            BlockState state = schematicWorld.getBlockState(pos);
+            BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
+            if (halves != null) {
+                // 优先读取 Servux 数据，没有则回退到 OP NBT 数据
+                Map<Integer, ItemStack> right = ServuxSyncHandler.getCachedData(halves[0]);
+                if (right == null) right = NBT_QUERY_CACHE.get(halves[0]);
+
+                Map<Integer, ItemStack> left = ServuxSyncHandler.getCachedData(halves[1]);
+                if (left == null) left = NBT_QUERY_CACHE.get(halves[1]);
+
+                if (right != null || left != null) {
+                    Map<Integer, ItemStack> combined = new HashMap<>();
+                    if (right != null) combined.putAll(right);
+                    if (left != null) {
+                        left.forEach((k, v) -> combined.put(k + 27, v));
+                    }
+                    return combined;
+                }
+                return null;
+            }
+        }
 
         Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(pos);
         if (servuxData != null) return servuxData;
 
-        return null;
+        return NBT_QUERY_CACHE.get(pos);
     }
 
     public static void requestContainerData(BlockPos pos) {
@@ -95,20 +123,43 @@ public class RealContainerCache {
         if (now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < 2000) return;
         LAST_REQUEST_TIME.put(pos, now);
 
+        boolean isDouble = false;
+        BlockPos[] halves = null;
+        var schematicWorld = fi.dy.masa.litematica.world.SchematicWorldHandler.getSchematicWorld();
+        if (schematicWorld != null) {
+            BlockState state = schematicWorld.getBlockState(pos);
+            halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
+            if (halves != null) isDouble = true;
+        }
+
         if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
-            if (ServuxSyncHandler.requestData(pos)) {
-                return;
+            if (isDouble) {
+                boolean s1 = ServuxSyncHandler.requestData(halves[0]);
+                boolean s2 = ServuxSyncHandler.requestData(halves[1]);
+                if (s1 || s2) return;
+            } else {
+                if (ServuxSyncHandler.requestData(pos)) return;
             }
         }
 
         if (!Configs.ENABLE_OP_NBT_QUERY.getBooleanValue()) return;
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.getNetworkHandler() == null) return;
-        if (!client.player.hasPermissionLevel(2)) return;
+
+        if (isDouble) {
+            int id1 = transactionCounter++;
+            PENDING_NBT_REQUESTS.put(id1, halves[0]);
+            client.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket(id1, halves[0]));
+
+            int id2 = transactionCounter++;
+            PENDING_NBT_REQUESTS.put(id2, halves[1]);
+            client.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket(id2, halves[1]));
+            return;
+        }
 
         int id = transactionCounter++;
         PENDING_NBT_REQUESTS.put(id, pos);
-        client.getNetworkHandler().sendPacket(new QueryBlockNbtC2SPacket(id, pos));
+        client.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket(id, pos));
     }
 
     public static void handleNbtResponse(int transactionId, NbtCompound nbt) {

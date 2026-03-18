@@ -1,9 +1,9 @@
 package com.mimicenzymes.litematicafiller.render;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
+import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
-import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
@@ -19,6 +19,7 @@ public class HighlightScanner {
     private static int scanIndex = 0;
     private static int currentRadius = 0;
     private static BlockPos currentCenter = null;
+    private static final int BLOCKS_PER_TICK = 5000;
 
     public static Map<BlockPos, HighlightState> getHighlights() {
         return HIGHLIGHT_MAP;
@@ -88,11 +89,10 @@ public class HighlightScanner {
 
         boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
         int r = currentRadius;
-
         long startTime = System.nanoTime();
         int processed = 0;
 
-        while (scanIndex < maxIndex) {
+        while (processed < BLOCKS_PER_TICK && scanIndex < maxIndex) {
             int x = (scanIndex % side) - r;
             int y = ((scanIndex / side) % side) - r;
             int z = ((scanIndex / (side * side)) % side) - r;
@@ -132,9 +132,7 @@ public class HighlightScanner {
 
             NEXT_HIGHLIGHT_MAP.put(pos.toImmutable(), type);
 
-            if (hideCompleted && type == HighlightState.SATISFIED) {
-                HIGHLIGHT_MAP.remove(pos.toImmutable());
-            } else {
+            if (!(hideCompleted && type == HighlightState.SATISFIED)) {
                 HIGHLIGHT_MAP.put(pos.toImmutable(), type);
             }
         }

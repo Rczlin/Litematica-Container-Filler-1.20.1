@@ -19,6 +19,10 @@ public class HighlightRenderer {
     private static final HighlightRenderer INSTANCE = new HighlightRenderer();
     public static HighlightRenderer getInstance() { return INSTANCE; }
 
+    public void render() {
+        render(null);
+    }
+
     public void render(Object context) {
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) return;
 
@@ -38,6 +42,7 @@ public class HighlightRenderer {
             if (xray) {
                 RenderSystem.disableDepthTest();
                 RenderSystem.depthMask(false);
+                GL11.glDepthRange(0.0, 0.0);
             } else {
                 RenderSystem.enableDepthTest();
                 RenderSystem.depthMask(true);
@@ -62,18 +67,25 @@ public class HighlightRenderer {
 
             for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
                 Color4f c = getColor(entry.getValue());
-                drawBoxBatched(entry.getKey(), c, 0.005, buffer, client);
+                drawBoxBatched(entry.getKey(), c, 0.015, buffer, client);
             }
 
             Object meshData = null;
             for (java.lang.reflect.Method m : buffer.getClass().getMethods()) {
-                if (m.getParameterCount() == 0) {
+                if (m.getParameterCount() == 0 && m.getReturnType() != void.class) {
                     String name = m.getName();
                     String retName = m.getReturnType().getSimpleName();
-                    if (name.equals("end") || name.equals("build") || name.equals("buildOrThrow") || name.equals("method_43428") || retName.contains("Mesh") || retName.contains("Built")) {
-                        m.setAccessible(true);
-                        meshData = m.invoke(buffer);
-                        if (meshData != null) break;
+                    if (name.equals("end") || name.equals("endNullable") || name.equals("build") || name.equals("buildOrThrow")
+                            || name.equals("method_43428") || name.equals("method_60800")
+                            || retName.contains("Mesh") || retName.contains("Built")) {
+                        try {
+                            m.setAccessible(true);
+                            Object result = m.invoke(buffer);
+                            if (result != null) {
+                                meshData = result;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
                     }
                 }
             }
@@ -86,22 +98,24 @@ public class HighlightRenderer {
                 }
                 if (targetMethod == null) {
                     for (java.lang.reflect.Method m : net.minecraft.client.render.BufferRenderer.class.getDeclaredMethods()) {
-                        if (java.lang.reflect.Modifier.isStatic(m.getModifiers()) && m.getParameterCount() == 1 && m.getParameterTypes()[0].isAssignableFrom(meshData.getClass())) {
-                            if (!m.getName().equals("draw") && !m.getName().equals("method_43438")) {
-                                targetMethod = m;
-                                break;
-                            }
+                        if (java.lang.reflect.Modifier.isStatic(m.getModifiers()) && m.getParameterCount() == 1
+                                && m.getParameterTypes()[0].isAssignableFrom(meshData.getClass())
+                                && !m.getName().equals("draw") && !m.getName().equals("method_43438")) {
+                            targetMethod = m;
+                            break;
                         }
                     }
                 }
                 if (targetMethod != null) {
-                    targetMethod.setAccessible(true);
-                    targetMethod.invoke(null, meshData);
+                    try {
+                        targetMethod.setAccessible(true);
+                        targetMethod.invoke(null, meshData);
+                    } catch (Exception ignored) {}
                 }
 
                 for (java.lang.reflect.Method m : meshData.getClass().getMethods()) {
-                    if (m.getName().equals("close") && m.getParameterCount() == 0) {
-                        m.invoke(meshData);
+                    if ((m.getName().equals("close") || m.getName().equals("method_43429")) && m.getParameterCount() == 0) {
+                        try { m.invoke(meshData); } catch (Exception ignored) {}
                         break;
                     }
                 }
@@ -112,12 +126,13 @@ public class HighlightRenderer {
             if (xray) {
                 RenderSystem.enableDepthTest();
                 RenderSystem.depthFunc(GL11.GL_LEQUAL);
+                GL11.glDepthRange(0.0, 1.0);
             }
             RenderSystem.enableCull();
             RenderSystem.disableBlend();
 
         } catch (Throwable e) {
-            System.err.println("[LitematicaFiller] 渲染致命错误: " + e.getMessage());
+            System.err.println("[容器填充] 渲染致命错误: " + e.getMessage());
         }
     }
 
