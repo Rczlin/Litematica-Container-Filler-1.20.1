@@ -37,27 +37,23 @@ public class HighlightRenderer {
             }
 
             Object meshData = null;
-            for (java.lang.reflect.Method m : buffer.getClass().getDeclaredMethods()) {
-                if (m.getParameterCount() == 0) {
+            for (java.lang.reflect.Method m : buffer.getClass().getMethods()) {
+                if (m.getParameterCount() == 0 && m.getReturnType() != void.class) {
                     String name = m.getName();
                     String retName = m.getReturnType().getSimpleName();
-                    if (name.equals("build") || name.equals("end") || name.equals("buildOrThrow") || retName.contains("Mesh") || retName.contains("Built")) {
-                        m.setAccessible(true);
-                        meshData = m.invoke(buffer);
-                        if (meshData != null) break;
-                    }
-                }
-            }
 
-            if (meshData == null) {
-                for (java.lang.reflect.Method m : buffer.getClass().getMethods()) {
-                    if (m.getParameterCount() == 0) {
-                        String retName = m.getReturnType().getSimpleName();
-                        if (retName.contains("Mesh") || retName.contains("Built")) {
+                    if (name.equals("build") || name.equals("end") || name.equals("endNullable") || name.equals("buildOrThrow")
+                            || name.equals("method_43428") || name.equals("method_60800")
+                            || retName.contains("Mesh") || retName.contains("Built")) {
+
+                        try {
                             m.setAccessible(true);
-                            meshData = m.invoke(buffer);
-                            if (meshData != null) break;
-                        }
+                            Object result = m.invoke(buffer);
+                            if (result != null) {
+                                meshData = result;
+                                break;
+                            }
+                        } catch (Exception ignored) {}
                     }
                 }
             }
@@ -65,13 +61,16 @@ public class HighlightRenderer {
             if (meshData != null) {
                 for (java.lang.reflect.Method m : ctx.getClass().getMethods()) {
                     if (m.getName().equals("draw") && m.getParameterCount() == 3) {
-                        m.invoke(ctx, meshData, false, true);
-                        break;
+                        Class<?>[] params = m.getParameterTypes();
+                        if (params[0].isInstance(meshData) && params[1] == boolean.class && params[2] == boolean.class) {
+                            m.invoke(ctx, meshData, false, true);
+                            break;
+                        }
                     }
                 }
 
                 for (java.lang.reflect.Method m : meshData.getClass().getMethods()) {
-                    if (m.getName().equals("close") && m.getParameterCount() == 0) {
+                    if ((m.getName().equals("close") || m.getName().equals("method_43429")) && m.getParameterCount() == 0) {
                         m.invoke(meshData);
                         break;
                     }
