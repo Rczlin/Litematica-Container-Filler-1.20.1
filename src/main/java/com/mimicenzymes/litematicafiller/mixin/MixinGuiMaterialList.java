@@ -4,6 +4,7 @@ import com.mimicenzymes.litematicafiller.materials.FillMaterialCalculator;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
+import fi.dy.masa.malilib.util.StringUtils;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
@@ -28,9 +29,9 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
     @Inject(method = "initGui", at = @At("RETURN"))
     private void onInitGui(CallbackInfo ci) {
-        String text = "模式: 仅建筑方块";
-        if (FillMaterialCalculator.listMode == 1) text = "模式: 仅容器物品";
-        else if (FillMaterialCalculator.listMode == 2) text = "模式: 容器+方块";
+        String text = StringUtils.translate("litematica_container_filler.gui.button.mode_blocks_only");
+        if (FillMaterialCalculator.listMode == 1) text = StringUtils.translate("litematica_container_filler.gui.button.mode_containers_only");
+        else if (FillMaterialCalculator.listMode == 2) text = StringUtils.translate("litematica_container_filler.gui.button.mode_both");
 
         int maxX = 10;
         int targetY = 26;
@@ -65,6 +66,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
         this.addButton(toggleBtn, (button, mouseButton) -> {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
+            System.out.println("[LitematicaFiller-DEBUG] [1.GUI] 按钮被点击! 当前模式切换为 listMode = " + FillMaterialCalculator.listMode);
 
             mimic_lastContentHash = -1;
             mimic_lastLayerHash = "";
@@ -89,6 +91,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                     } catch (Exception e) {}
                 }
                 mimic_isMonitorRunning = false;
+                System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 界面关闭，看门狗已安全退出。");
             });
             monitor.setDaemon(true);
             monitor.setName("LitematicaFiller-MergeWatchdog");
@@ -255,6 +258,8 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
             if (currentHash == mimic_lastContentHash && currentLayerHash.equals(mimic_lastLayerHash)) return;
 
+            System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 监测到原生数据 或 渲染层变动! 强制开始融合...");
+
             if (FillMaterialCalculator.listMode == 1) {
                 FillMaterialCalculator.calculate(this, true);
                 List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList();
@@ -282,6 +287,8 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                 }
 
                 java.util.List<Object> toAdd = new java.util.ArrayList<>();
+                int mergeCount = 0;
+                int appendCount = 0;
 
                 for (fi.dy.masa.litematica.materials.MaterialListEntry cEntry : containerEntries) {
                     ItemStack cStack = getStackFromEntry(cEntry);
@@ -307,16 +314,19 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
                             rawMaterials.set(i, merged);
                             found = true;
+                            mergeCount++;
                             break;
                         }
                     }
 
                     if (!found) {
                         toAdd.add(cEntry);
+                        appendCount++;
                     }
                 }
 
                 rawMaterials.addAll(toAdd);
+                System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 融合大成功！合并了 " + mergeCount + " 个共有方块，追加了 " + appendCount + " 个容器物品！");
 
                 mimic_lastContentHash = calculateContentHash(rawMaterials);
                 mimic_lastLayerHash = currentLayerHash;

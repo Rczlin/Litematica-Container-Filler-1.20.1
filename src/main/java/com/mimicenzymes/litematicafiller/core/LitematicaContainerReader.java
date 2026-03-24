@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class LitematicaContainerReader {
+
     public static BlockPos[] getDoubleContainerHalves(net.minecraft.world.World world, BlockPos pos, BlockState state) {
         if (state.getBlock() instanceof ChestBlock) {
             ChestType type = state.get(ChestBlock.CHEST_TYPE);
@@ -29,15 +30,12 @@ public class LitematicaContainerReader {
                 return new BlockPos[]{rightPos, leftPos};
             }
         } else if (state.isOf(net.minecraft.block.Blocks.BARREL)) {
-            // 木桶的底部等于它的朝向的反方向
             Direction facing = state.get(net.minecraft.block.BarrelBlock.FACING);
             Direction bottomDir = facing.getOpposite();
             BlockPos pos2 = pos.offset(bottomDir);
             BlockState state2 = world.getBlockState(pos2);
 
-            // 检查与之底部相连的方块是否也是木桶，并且它的朝向刚好和当前木桶相反
             if (state2.isOf(net.minecraft.block.Blocks.BARREL) && state2.get(net.minecraft.block.BarrelBlock.FACING) == facing.getOpposite()) {
-                // 找到相连的大木桶，通过坐标比较保证主次顺序永远一致，避免两半的物品槽位反转
                 if (pos.compareTo(pos2) < 0) {
                     return new BlockPos[]{pos, pos2};
                 } else {

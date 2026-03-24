@@ -31,22 +31,43 @@ public abstract class GuiMainMenuMixin extends GuiBase {
             }
 
             if (buttons != null && !buttons.isEmpty()) {
-                int maxY = -1;
+                int schematicManagerY = -1;
                 Object anchorBtn = null;
 
                 for (Object btnObj : buttons) {
                     int btnY = (int) btnObj.getClass().getMethod("getY").invoke(btnObj);
                     int btnX = (int) btnObj.getClass().getMethod("getX").invoke(btnObj);
-                    if (btnX > 120 && btnY > maxY) {
-                        maxY = btnY;
-                        anchorBtn = btnObj;
+
+                    if (btnX > 80 && btnX < 180 && btnY >= 80) {
+                        if (schematicManagerY == -1 || btnY < schematicManagerY) {
+                            schematicManagerY = btnY;
+                            anchorBtn = btnObj;
+                        }
                     }
                 }
 
                 if (anchorBtn != null) {
-                    targetX = (int) anchorBtn.getClass().getMethod("getX").invoke(anchorBtn);
-                    targetY = maxY + 22;
-                    btnWidth = (int) anchorBtn.getClass().getMethod("getWidth").invoke(anchorBtn);
+                    int anchorX = (int) anchorBtn.getClass().getMethod("getX").invoke(anchorBtn);
+                    int anchorWidth = (int) anchorBtn.getClass().getMethod("getWidth").invoke(anchorBtn);
+
+                    targetX = anchorX + anchorWidth + 4;
+                    targetY = schematicManagerY;
+                    btnWidth = anchorWidth;
+                }
+
+                boolean isOccupied = true;
+                while (isOccupied) {
+                    isOccupied = false;
+                    for (Object btnObj : buttons) {
+                        int btnY = (int) btnObj.getClass().getMethod("getY").invoke(btnObj);
+                        int btnX = (int) btnObj.getClass().getMethod("getX").invoke(btnObj);
+
+                        if (Math.abs(btnX - targetX) < 5 && Math.abs(btnY - targetY) < 5) {
+                            isOccupied = true;
+                            targetY += 24;
+                            break;
+                        }
+                    }
                 }
             }
         } catch (Exception ignored) {}

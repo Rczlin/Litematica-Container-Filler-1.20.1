@@ -51,18 +51,29 @@ public class RealContainerCache {
     }
 
     public static void updateFromHandler(MinecraftClient client, ScreenHandler handler) {
+        if (handler == null) return;
+
+        if (handler instanceof net.minecraft.screen.PlayerScreenHandler ||
+                handler.getClass().getSimpleName().contains("CreativeScreenHandler")) {
+            return;
+        }
+
         BlockPos pos = AutoFillerStateMachine.getInstance().getCurrentTaskPos();
         if (pos == null) pos = lastLookedPos;
-        if (pos == null || handler == null) return;
+        if (pos == null) return;
 
         Map<Integer, ItemStack> items = new HashMap<>();
 
+        net.minecraft.inventory.Inventory primaryInv = null;
+        if (!handler.slots.isEmpty()) {
+            primaryInv = handler.slots.get(0).inventory;
+        }
+
         for (Slot slot : handler.slots) {
-            if (slot.inventory != null && slot.inventory != client.player.getInventory()) {
-                if (handler instanceof net.minecraft.screen.CrafterScreenHandler && slot.getIndex() == 9) {
-                    continue;
+            if (slot.inventory != null && slot.inventory == primaryInv) {
+                if (!slot.getStack().isEmpty()) {
+                    items.put(slot.getIndex(), slot.getStack().copy());
                 }
-                if (!slot.getStack().isEmpty()) items.put(slot.getIndex(), slot.getStack().copy());
             }
         }
 
@@ -93,7 +104,6 @@ public class RealContainerCache {
             BlockState state = schematicWorld.getBlockState(pos);
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
             if (halves != null) {
-                // 优先读取 Servux 数据，没有则回退到 OP NBT 数据
                 Map<Integer, ItemStack> right = ServuxSyncHandler.getCachedData(halves[0]);
                 if (right == null) right = NBT_QUERY_CACHE.get(halves[0]);
 
@@ -212,6 +222,7 @@ public class RealContainerCache {
             ItemStack real = realItems.getOrDefault(i, ItemStack.EMPTY);
             ItemStack req = (required != null) ? required.getOrDefault(i, ItemStack.EMPTY) : ItemStack.EMPTY;
             if (real.isEmpty() && req.isEmpty()) continue;
+
             if (real.isEmpty() != req.isEmpty() || !ItemMatcher.isSameItem(real, req) || real.getCount() != req.getCount()) {
                 return false;
             }

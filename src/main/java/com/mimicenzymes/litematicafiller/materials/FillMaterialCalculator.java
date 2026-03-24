@@ -1,10 +1,9 @@
 package com.mimicenzymes.litematicafiller.materials;
 
-import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
+import com.mimicenzymes.litematicafiller.core.MaterialReplacer;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
-import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.Item;
@@ -197,6 +196,9 @@ public class FillMaterialCalculator {
             }
 
             Map<Integer, ItemStack> required = RealContainerCache.parseNbtInventory(ctx.nbt, client.world.getRegistryManager());
+
+            MaterialReplacer.replaceInMap(required);
+
             BlockPos mainPos = pos;
             BlockState realState = client.world.getBlockState(pos);
 
@@ -212,6 +214,10 @@ public class FillMaterialCalculator {
 
                     if (nbtMap.containsKey(otherPos)) {
                         Map<Integer, ItemStack> otherReq = RealContainerCache.parseNbtInventory(nbtMap.get(otherPos).nbt, client.world.getRegistryManager());
+
+                        // 【核心恢复】：同时替换另外半边箱子
+                        MaterialReplacer.replaceInMap(otherReq);
+
                         if (isPrimary) {
                             for (Map.Entry<Integer, ItemStack> e : otherReq.entrySet()) {
                                 required.put(e.getKey() + 27, e.getValue());
@@ -302,7 +308,7 @@ public class FillMaterialCalculator {
         }
 
         if (!silent && client.player != null) {
-            client.player.sendMessage(net.minecraft.text.Text.literal("§a[容器填充] 原理图解析完毕: 找到容器 " + foundContainersAll + " 个"), false);
+            client.player.sendMessage(net.minecraft.text.Text.translatable("litematica_container_filler.message.parsed_containers", foundContainersAll), false);
         }
     }
 
