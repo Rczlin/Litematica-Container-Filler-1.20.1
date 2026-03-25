@@ -141,7 +141,7 @@ public class AutoFillerStateMachine {
 
             ServerPlayerEntity serverPlayer = client.getServer().getPlayerManager().getPlayer(client.player.getUuid());
             if (serverPlayer != null) {
-                ServerWorld serverWorld = (ServerWorld) serverPlayer.getEntityWorld();
+                ServerWorld serverWorld = (ServerWorld) serverPlayer.getWorld();
 
                 if (serverWorld != null) {
                     net.minecraft.block.BlockState clientState = client.world.getBlockState(finalPos);
@@ -282,6 +282,7 @@ public class AutoFillerStateMachine {
             return;
         }
 
+        boolean isCrafter = client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
         boolean needsAction = false;
         Map<Integer, ItemStack> missingItems = new HashMap<>();
 
@@ -305,11 +306,10 @@ public class AutoFillerStateMachine {
                 diff.setCount(req.getCount() - cur.getCount());
                 missingItems.put(i, diff);
             } else if (cur.getCount() > req.getCount()) {
-                needsAction = true;
+                if (!isCrafter) needsAction = true;
             }
         }
 
-        boolean isCrafter = client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
         if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, client)) {
             needsAction = true;
         }
@@ -333,8 +333,10 @@ public class AutoFillerStateMachine {
             }
             if (!hasItemsToFill) {
                 if (!Configs.AUTO_STASH_ITEMS.getBooleanValue() || findStashAction(client, currentTask.missingItems.values()) == null) {
-                    sendFeedback(client, Text.translatable("litematica_container_filler.message.inventory_full_no_stash").getString(), true);
-                    return false;
+                    if (!Configs.DROP_EXTRACTED_ITEMS.getBooleanValue()) {
+                        sendFeedback(client, Text.translatable("litematica_container_filler.message.inventory_full_no_stash").getString(), true);
+                        return false;
+                    }
                 }
             }
         }
@@ -506,6 +508,7 @@ public class AutoFillerStateMachine {
                     if (lateCache != null) {
                         currentTask.needsInspection = false;
 
+                        boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
                         boolean needsAction = false;
                         Map<Integer, ItemStack> missingItems = new HashMap<>();
 
@@ -527,11 +530,10 @@ public class AutoFillerStateMachine {
                                 diff.setCount(req.getCount() - cur.getCount());
                                 missingItems.put(i, diff);
                             } else if (cur.getCount() > req.getCount()) {
-                                needsAction = true;
+                                if (!isCrafter) needsAction = true;
                             }
                         }
 
-                        boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
                         if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
                             needsAction = true;
                         }
@@ -626,6 +628,7 @@ public class AutoFillerStateMachine {
             Map<Integer, ItemStack> newlyCached = getReliableCache(currentTask.targetPos);
             if (newlyCached == null) newlyCached = new HashMap<>();
 
+            boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
             boolean needsAction = false;
             Map<Integer, ItemStack> missingItems = new HashMap<>();
 
@@ -647,11 +650,10 @@ public class AutoFillerStateMachine {
                     diff.setCount(req.getCount() - cur.getCount());
                     missingItems.put(i, diff);
                 } else if (cur.getCount() > req.getCount()) {
-                    needsAction = true;
+                    if (!isCrafter) needsAction = true;
                 }
             }
 
-            boolean isCrafter = client.world.getBlockState(currentTask.targetPos).getBlock() instanceof net.minecraft.block.CrafterBlock;
             if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(currentTask.targetPos, client)) {
                 needsAction = true;
             }
@@ -985,10 +987,16 @@ public class AutoFillerStateMachine {
         int syncId = handler.syncId;
         int delay = Configs.ENABLE_SAFETY_DELAY.getBooleanValue() ? Configs.FILL_DELAY.getIntegerValue() : 0;
 
+        boolean dropExtracted = Configs.DROP_EXTRACTED_ITEMS.getBooleanValue();
+
         if (!handler.getCursorStack().isEmpty()) {
             if (!tryPlaceCursorItem(client, handler)) {
-                abortTask(client, "litematica_container_filler.message.cursor_stuck");
-                return;
+                if (dropExtracted) {
+                    client.interactionManager.clickSlot(syncId, -999, 0, SlotActionType.PICKUP, client.player);
+                } else {
+                    abortTask(client, "litematica_container_filler.message.cursor_stuck");
+                    return;
+                }
             }
             if (delay > 0) { actionWaitTicks = delay; return; }
         }
@@ -999,8 +1007,15 @@ public class AutoFillerStateMachine {
             for (int i = 0; i < 9; i++) {
                 boolean shouldBeDisabled = targetDisabled != null && targetDisabled.contains(i);
                 if (shouldBeDisabled != crafterHandler.isSlotDisabled(i)) {
-                    if (crafterHandler.getSlot(i).hasStack()) simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 0, SlotActionType.QUICK_MOVE);
-                    else simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 0, SlotActionType.PICKUP);
+                    if (crafterHandler.getSlot(i).hasStack()) {
+                        if (dropExtracted) {
+                            simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 1, SlotActionType.THROW);
+                        } else {
+                            simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 0, SlotActionType.QUICK_MOVE);
+                        }
+                    } else {
+                        simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 0, SlotActionType.PICKUP);
+                    }
                     toggledInThisTick = true;
                     if (delay > 0) break;
                 }
@@ -1014,6 +1029,8 @@ public class AutoFillerStateMachine {
 
         boolean movedAny = false;
         boolean stillNeedsAction = false;
+        boolean swappedAnyInThisPass = false;
+        boolean extractedAnyInThisPass = false;
 
         for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
             if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
@@ -1022,39 +1039,87 @@ public class AutoFillerStateMachine {
             int uiSlot = currentMapper.getUiSlotForContainer(containerSlot);
             ItemStack curStack = handler.slots.get(uiSlot).getStack();
 
-            if (reqStack.isEmpty() && curStack.isEmpty()) continue;
-
-            boolean isWrong = !curStack.isEmpty() && !ItemMatcher.isSameItem(curStack, reqStack);
-            boolean isExcess = !curStack.isEmpty() && ItemMatcher.isSameItem(curStack, reqStack) && curStack.getCount() > reqStack.getCount();
-
-            if (reqStack.isEmpty() || isWrong || isExcess) {
+            if (!reqStack.isEmpty() && !curStack.isEmpty() && !ItemMatcher.isSameItem(reqStack, curStack)) {
                 stillNeedsAction = true;
-                if (!canAbsorb(client, curStack)) {
-                    triggerStashOrAbort(client);
-                    return;
-                }
-                client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.QUICK_MOVE, client.player);
-                movedAny = true;
-                if (delay > 0) break;
-                continue;
-            }
 
-            int curCount = curStack.isEmpty() ? 0 : curStack.getCount();
-            int actualMissing = reqStack.getCount() - curCount;
-
-            if (actualMissing > 0) {
-                stillNeedsAction = true;
-                ItemStack needed = reqStack.copy();
-                needed.setCount(actualMissing);
-
-                int playerSlot = findItemInPlayerInv(client, needed);
+                int playerSlot = findItemInPlayerInv(client, reqStack);
                 if (playerSlot != -1) {
-                    ItemStack sourceStack = client.player.getInventory().getStack(playerSlot);
-                    int amountToMove = Math.min(actualMissing, sourceStack.getCount());
+                    int uiPlayerSlot = currentMapper.getUiSlotForPlayer(playerSlot);
 
-                    fillFromPlayerInv(client, syncId, playerSlot, uiSlot, actualMissing);
+                    client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+                    client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.PICKUP, client.player);
+
+                    if (dropExtracted) {
+                        client.interactionManager.clickSlot(syncId, -999, 0, SlotActionType.PICKUP, client.player);
+                    } else {
+                        client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+                    }
+
                     movedAny = true;
+                    swappedAnyInThisPass = true;
                     if (delay > 0) break;
+                }
+            }
+        }
+
+        if (!swappedAnyInThisPass || delay == 0) {
+            for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
+                if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
+
+                ItemStack reqStack = currentTask.requiredItems.getOrDefault(containerSlot, ItemStack.EMPTY);
+                int uiSlot = currentMapper.getUiSlotForContainer(containerSlot);
+                ItemStack curStack = handler.slots.get(uiSlot).getStack();
+
+                if (curStack.isEmpty()) continue;
+
+                boolean isWrong = !reqStack.isEmpty() && !ItemMatcher.isSameItem(curStack, reqStack);
+                boolean isExcess = ItemMatcher.isSameItem(curStack, reqStack) && curStack.getCount() > reqStack.getCount();
+                if (handler instanceof CrafterScreenHandler) isExcess = false;
+
+                if (reqStack.isEmpty() || isWrong || isExcess) {
+                    stillNeedsAction = true;
+
+                    if (dropExtracted) {
+                        client.interactionManager.clickSlot(syncId, uiSlot, 1, SlotActionType.THROW, client.player);
+                    } else {
+                        if (!canAbsorb(client, curStack)) {
+                            triggerStashOrAbort(client);
+                            return;
+                        }
+                        client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.QUICK_MOVE, client.player);
+                    }
+
+                    movedAny = true;
+                    extractedAnyInThisPass = true;
+                    if (delay > 0) break;
+                }
+            }
+        }
+
+        if ((!swappedAnyInThisPass && !extractedAnyInThisPass) || delay == 0) {
+            for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
+                if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
+
+                ItemStack reqStack = currentTask.requiredItems.getOrDefault(containerSlot, ItemStack.EMPTY);
+                int uiSlot = currentMapper.getUiSlotForContainer(containerSlot);
+                ItemStack curStack = handler.slots.get(uiSlot).getStack();
+
+                if (reqStack.isEmpty()) continue;
+
+                int curCount = curStack.isEmpty() ? 0 : curStack.getCount();
+                int actualMissing = reqStack.getCount() - curCount;
+
+                if (actualMissing > 0 && (curStack.isEmpty() || ItemMatcher.isSameItem(curStack, reqStack))) {
+                    stillNeedsAction = true;
+                    ItemStack needed = reqStack.copy();
+                    needed.setCount(actualMissing);
+
+                    int playerSlot = findItemInPlayerInv(client, needed);
+                    if (playerSlot != -1) {
+                        fillFromPlayerInv(client, syncId, playerSlot, uiSlot, actualMissing);
+                        movedAny = true;
+                        if (delay > 0) break;
+                    }
                 }
             }
         }

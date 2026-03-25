@@ -6,7 +6,6 @@ import fi.dy.masa.malilib.config.IConfigBase;
 import fi.dy.masa.malilib.config.options.ConfigBoolean;
 import fi.dy.masa.malilib.config.options.ConfigColor;
 import fi.dy.masa.malilib.config.options.ConfigInteger;
-
 import java.util.List;
 
 public class Configs {
@@ -17,7 +16,7 @@ public class Configs {
     public static final ConfigBoolean AREA_MODE = new ConfigBoolean("litematica_container_filler.config.name.areaMode", false, "litematica_container_filler.config.comment.areaMode");
     public static final ConfigInteger FILL_RADIUS = new ConfigInteger("litematica_container_filler.config.name.fillRadius", 5, 1, 32, "litematica_container_filler.config.comment.fillRadius");
     public static final ConfigInteger FILL_DELAY = new ConfigInteger("litematica_container_filler.config.name.fillDelay", 0, 0, 100, "litematica_container_filler.config.comment.fillDelay");
-    public static final fi.dy.masa.malilib.config.options.ConfigStringList MATERIAL_REPLACEMENTS = new fi.dy.masa.malilib.config.options.ConfigStringList("litematica_container_filler.config.name.materialReplacements", ImmutableList.of(), "litematica_container_filler.config.comment.materialReplacements");
+    public static final fi.dy.masa.malilib.config.options.ConfigStringList MATERIAL_REPLACEMENTS = new fi.dy.masa.malilib.config.options.ConfigStringList("litematica_container_filler.config.name.materialReplacements", com.google.common.collect.ImmutableList.of(), "litematica_container_filler.config.comment.materialReplacements");
 
     //数据同步设置
     public static final ConfigBoolean ENABLE_DATA_SYNC = new ConfigBoolean("litematica_container_filler.config.name.enableDataSync", true, "litematica_container_filler.config.comment.enableDataSync");
@@ -26,6 +25,7 @@ public class Configs {
     //自动物流设置
     public static final ConfigBoolean ENABLE_QS_EXTRACTION = new ConfigBoolean("litematica_container_filler.config.name.enableQsExtraction", true, "litematica_container_filler.config.comment.enableQsExtraction");
     public static final ConfigBoolean AUTO_STASH_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.autoStashItems", true, "litematica_container_filler.config.comment.autoStashItems");
+    public static final ConfigBoolean DROP_EXTRACTED_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.dropExtractedItems", false, "litematica_container_filler.config.comment.dropExtractedItems");
     public static final ConfigBoolean ENABLE_SAFETY_DELAY = new ConfigBoolean("litematica_container_filler.config.name.enableSafetyDelay", true, "litematica_container_filler.config.comment.enableSafetyDelay");
 
     //高亮渲染基础设置
@@ -58,7 +58,7 @@ public class Configs {
         if (DependencyChecker.HAS_QUICK_SHULKER) {
             builder.add(ENABLE_QS_EXTRACTION);
         }
-        builder.add(AUTO_STASH_ITEMS, ENABLE_SAFETY_DELAY);
+        builder.add(AUTO_STASH_ITEMS, DROP_EXTRACTED_ITEMS, ENABLE_SAFETY_DELAY);
 
         // 渲染
         builder.add(HIGHLIGHT_CONTAINERS, HIGHLIGHT_XRAY, RENDER_RADIUS, SYNC_LITE_LAYER, HIDE_COMPLETED_CONTAINERS);
