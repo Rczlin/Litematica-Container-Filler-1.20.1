@@ -6,6 +6,7 @@ import fi.dy.masa.malilib.config.IConfigBase;
 import fi.dy.masa.malilib.config.options.ConfigBoolean;
 import fi.dy.masa.malilib.config.options.ConfigColor;
 import fi.dy.masa.malilib.config.options.ConfigInteger;
+
 import java.util.List;
 
 public class Configs {
@@ -16,6 +17,7 @@ public class Configs {
     public static final ConfigBoolean AREA_MODE = new ConfigBoolean("litematica_container_filler.config.name.areaMode", false, "litematica_container_filler.config.comment.areaMode");
     public static final ConfigInteger FILL_RADIUS = new ConfigInteger("litematica_container_filler.config.name.fillRadius", 5, 1, 32, "litematica_container_filler.config.comment.fillRadius");
     public static final ConfigInteger FILL_DELAY = new ConfigInteger("litematica_container_filler.config.name.fillDelay", 0, 0, 100, "litematica_container_filler.config.comment.fillDelay");
+    public static final fi.dy.masa.malilib.config.options.ConfigStringList MATERIAL_REPLACEMENTS = new fi.dy.masa.malilib.config.options.ConfigStringList("litematica_container_filler.config.name.materialReplacements", ImmutableList.of(), "litematica_container_filler.config.comment.materialReplacements");
 
     //数据同步设置
     public static final ConfigBoolean ENABLE_DATA_SYNC = new ConfigBoolean("litematica_container_filler.config.name.enableDataSync", true, "litematica_container_filler.config.comment.enableDataSync");
@@ -47,7 +49,7 @@ public class Configs {
         ImmutableList.Builder<IConfigBase> builder = ImmutableList.builder();
 
         // 核心
-        builder.add(ENABLE_MOD, CONTINUOUS_FILL, AREA_MODE, FILL_RADIUS, FILL_DELAY);
+        builder.add(ENABLE_MOD, CONTINUOUS_FILL, AREA_MODE, FILL_RADIUS, FILL_DELAY, MATERIAL_REPLACEMENTS);
         // 数据
         builder.add(ENABLE_DATA_SYNC, ENABLE_OP_NBT_QUERY);
 
