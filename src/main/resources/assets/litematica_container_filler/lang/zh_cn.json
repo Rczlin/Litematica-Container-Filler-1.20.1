@@ -20,6 +20,7 @@
   "litematica_container_filler.config.name.materialReplacements": "材料替代规则",
   "litematica_container_filler.config.name.enableQsExtraction": "快捷潜影盒提取",
   "litematica_container_filler.config.name.autoStashItems": "自动暂存腾出空间",
+  "litematica_container_filler.config.name.dropExtractedItems": "丢弃多余/错误物品",
   "litematica_container_filler.config.name.enableOpNbtQuery": "启用 OP 主动获取数据",
   "litematica_container_filler.config.name.enableSafetyDelay": "启用安全延迟",
 
@@ -44,6 +45,7 @@
   "litematica_container_filler.config.comment.materialReplacements": "将原理图中的要求材料替换为另一种物品。\n格式：原物品ID->新物品ID（例：minecraft:stone->minecraft:cobblestone）。\n支持带名字替换，使用 # 符号连接名字（例：minecraft:stone#填充物1->minecraft:dirt#填充物2）。\n如果不带 #，将自动继承原物品的所有附加数据（如附魔、名字等）。\n可添加多条规则。",
   "litematica_container_filler.config.comment.enableQsExtraction": "允许模组在材料不足时，自动打开背包内的潜影盒提取所需物品",
   "litematica_container_filler.config.comment.autoStashItems": "开启后，当背包已满时，模组会自动把背包内无关的杂物暂存到潜影盒里，以腾出格子",
+  "litematica_container_filler.config.comment.dropExtractedItems": "开启后，机器在清理容器内的错误物品或多余杂物时，会直接将其扔在地上，而不是放回背包",
   "litematica_container_filler.config.comment.enableOpNbtQuery": "开启后，如果你拥有服务器的 OP 权限，模组会主动向服务端索要未打开的容器数据",
   "litematica_container_filler.config.comment.enableSafetyDelay": "关闭此项将使机器无视安全间隔延迟填充（可能引发Bug或被服务器踢出）。\n请谨慎使用。",
 
@@ -90,5 +92,6 @@
   "litematica_container_filler.message.inventory_full_stash_disabled": "§c[容器填充] 背包已满且已禁用自动腾空间，无法继续提取。",
   "litematica_container_filler.message.fill_completed": "§a[容器填充] 目标容器填充完成！",
   "litematica_container_filler.message.returning_items": "§e[容器填充] 正在处理多余材料及取回暂存的杂物...",
-  "litematica_container_filler.message.container_timeout": "§c[容器填充] 容器响应超时，已中断操作以保护您的操作流。"
+  "litematica_container_filler.message.container_timeout": "§c[容器填充] 容器响应超时，已中断操作以保护您的操作流。",
+  "litematica_container_filler.message.etc": " 等"
 }
