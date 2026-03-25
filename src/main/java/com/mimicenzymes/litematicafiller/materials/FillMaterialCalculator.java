@@ -215,7 +215,6 @@ public class FillMaterialCalculator {
                     if (nbtMap.containsKey(otherPos)) {
                         Map<Integer, ItemStack> otherReq = RealContainerCache.parseNbtInventory(nbtMap.get(otherPos).nbt, client.world.getRegistryManager());
 
-                        // 【核心恢复】：同时替换另外半边箱子
                         MaterialReplacer.replaceInMap(otherReq);
 
                         if (isPrimary) {
