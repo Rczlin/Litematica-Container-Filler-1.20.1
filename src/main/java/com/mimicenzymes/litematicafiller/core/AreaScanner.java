@@ -38,10 +38,12 @@ public class AreaScanner {
                     BlockState state = schematicWorld.getBlockState(pos);
                     if (state.isAir() || !state.hasBlockEntity()) continue;
 
-                    // 统一处理大箱子与Carpet大木桶的坐标归集
+                    BlockState realState = mc.world.getBlockState(pos);
+                    if (state.getBlock() != realState.getBlock()) continue;
+
                     BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
                     if (halves != null) {
-                        pos = halves[0]; // 永远重定向到主容器坐标
+                        pos = halves[0];
                     }
 
                     if (isSilentPrinter && ATTEMPT_COOLDOWNS.containsKey(pos) && now - ATTEMPT_COOLDOWNS.get(pos) < 5000) {

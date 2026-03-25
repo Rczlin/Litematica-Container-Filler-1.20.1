@@ -19,7 +19,9 @@ public class HighlightScanner {
     private static int scanIndex = 0;
     private static int currentRadius = 0;
     private static BlockPos currentCenter = null;
-    private static final int BLOCKS_PER_TICK = 5000;
+
+    private static final int BLOCKS_PER_TICK = 50000;
+    private static final long TIME_BUDGET_NANOS = 10_000_000L;
 
     public static Map<BlockPos, HighlightState> getHighlights() {
         return HIGHLIGHT_MAP;
@@ -41,15 +43,18 @@ public class HighlightScanner {
 
         boolean hideCompleted = Configs.HIDE_COMPLETED_CONTAINERS.getBooleanValue();
         boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
+        var layerRange = fi.dy.masa.litematica.data.DataManager.getRenderLayerRange();
 
         for (BlockPos pos : HIGHLIGHT_MAP.keySet()) {
-            if (syncLayer && !fi.dy.masa.litematica.data.DataManager.getRenderLayerRange().isPositionWithinRange(pos)) {
+            if (syncLayer && !layerRange.isPositionWithinRange(pos)) {
                 HIGHLIGHT_MAP.remove(pos);
                 continue;
             }
 
             BlockState state = schematicWorld.getBlockState(pos);
-            if (state.isAir() || !state.hasBlockEntity()) {
+            BlockState realState = client.world.getBlockState(pos);
+
+            if (!state.hasBlockEntity() || state.getBlock() != realState.getBlock()) {
                 HIGHLIGHT_MAP.remove(pos);
                 continue;
             }
@@ -59,7 +64,6 @@ public class HighlightScanner {
             if (halves != null) checkPos = halves[0];
 
             Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
-
             com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
 
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
@@ -100,6 +104,12 @@ public class HighlightScanner {
         long startTime = System.nanoTime();
         int processed = 0;
 
+        int cx = currentCenter.getX();
+        int cy = currentCenter.getY();
+        int cz = currentCenter.getZ();
+
+        BlockPos.Mutable mPos = new BlockPos.Mutable();
+
         while (processed < BLOCKS_PER_TICK && scanIndex < maxIndex) {
             int x = (scanIndex % side) - r;
             int y = ((scanIndex / side) % side) - r;
@@ -107,23 +117,32 @@ public class HighlightScanner {
             scanIndex++;
             processed++;
 
-            if (processed % 2000 == 0 && (System.nanoTime() - startTime > 2_000_000L)) {
+            if (processed % 5000 == 0 && (System.nanoTime() - startTime > TIME_BUDGET_NANOS)) {
                 break;
             }
 
-            BlockPos pos = currentCenter.add(x, y, z);
+            mPos.set(cx + x, cy + y, cz + z);
 
-            if (syncLayer && !fi.dy.masa.litematica.data.DataManager.getRenderLayerRange().isPositionWithinRange(pos)) continue;
+            if (syncLayer && !layerRange.isPositionWithinRange(mPos)) continue;
 
-            BlockState state = schematicWorld.getBlockState(pos);
-            if (state.isAir() || !state.hasBlockEntity()) continue;
+            BlockState state = schematicWorld.getBlockState(mPos);
+            if (!state.hasBlockEntity()) continue;
+
+            BlockState realState = client.world.getBlockState(mPos);
+            if (state.getBlock() != realState.getBlock()) continue;
+
+            BlockPos pos = mPos.toImmutable();
+
+            if (HIGHLIGHT_MAP.containsKey(pos)) {
+                NEXT_HIGHLIGHT_MAP.put(pos, HIGHLIGHT_MAP.get(pos));
+                continue;
+            }
 
             BlockPos checkPos = pos;
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
             if (halves != null) checkPos = halves[0];
 
             Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
-
             com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
 
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
@@ -141,10 +160,10 @@ public class HighlightScanner {
                 type = evaluateState(cached, required, isCrafter, checkPos, client);
             }
 
-            NEXT_HIGHLIGHT_MAP.put(pos.toImmutable(), type);
+            NEXT_HIGHLIGHT_MAP.put(pos, type);
 
             if (!(hideCompleted && type == HighlightState.SATISFIED)) {
-                HIGHLIGHT_MAP.put(pos.toImmutable(), type);
+                HIGHLIGHT_MAP.put(pos, type);
             }
         }
     }
