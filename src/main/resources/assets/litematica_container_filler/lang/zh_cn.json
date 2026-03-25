@@ -42,7 +42,7 @@
   "litematica_container_filler.config.comment.highlightContainers": "在世界中用线框高亮显示物品缺失、不符或尚未同步数据的蓝图容器",
   "litematica_container_filler.config.comment.highlightXray": "开启后，高亮边框将无视地形和方块遮挡（开启隔墙透视）",
   "litematica_container_filler.config.comment.fillDelay": "自动填充动作之间的间隔 (Ticks)，数值越大塞东西越慢",
-  "litematica_container_filler.config.comment.materialReplacements": "将原理图中的要求材料替换为另一种物品。\n格式：原物品ID->新物品ID（例：minecraft:stone->minecraft:cobblestone）。\n支持带名字替换，使用 # 符号连接名字（例：minecraft:stone#填充物1->minecraft:dirt#填充物2）。\n如果不带 #，将自动继承原物品的所有附加数据（如附魔、名字等）。\n可添加多条规则。",
+  "litematica_container_filler.config.comment.materialReplacements": "将原理图中的要求材料替换为另一种物品。\n格式：原物品ID->新物品ID（例：minecraft:stone->minecraft:cobblestone）。\n支持带名字替换，使用 # 符号连接名字（例：minecraft:stone#填充物1->minecraft:dirt#填充物2）。\n替换后的物品默认是纯净的（丢弃原物品的NBT/附魔等，防止无法匹配）。\n可添加多条规则。",
   "litematica_container_filler.config.comment.enableQsExtraction": "允许模组在材料不足时，自动打开背包内的潜影盒提取所需物品",
   "litematica_container_filler.config.comment.autoStashItems": "开启后，当背包已满时，模组会自动把背包内无关的杂物暂存到潜影盒里，以腾出格子",
   "litematica_container_filler.config.comment.dropExtractedItems": "开启后，机器在清理容器内的错误物品或多余杂物时，会直接将其扔在地上，而不是放回背包",
