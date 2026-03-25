@@ -20,12 +20,13 @@
   "litematica_container_filler.config.name.materialReplacements": "Material Replacements",
   "litematica_container_filler.config.name.enableQsExtraction": "Quick Shulker Extraction",
   "litematica_container_filler.config.name.autoStashItems": "Auto Stash Items",
+  "litematica_container_filler.config.name.dropExtractedItems": "Drop Extracted Items",
   "litematica_container_filler.config.name.enableOpNbtQuery": "Enable OP NBT Query",
   "litematica_container_filler.config.name.enableSafetyDelay": "Enable Safety Delay",
 
   "litematica_container_filler.config.name.highlightColorUnfilled": "Color: Unfilled (Blue)",
-  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Wrong Slot (Yellow)",
-  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Extra (Pink)",
+  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Mismatch (Yellow)",
+  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Excess (Pink)",
   "litematica_container_filler.config.name.highlightColorWrong": "Color: Wrong Item (Red)",
   "litematica_container_filler.config.name.highlightColorSatisfied": "Color: Satisfied (Green)",
   "litematica_container_filler.config.name.highlightColorUnknown": "Color: Unknown Data (Orange)",
@@ -44,8 +45,9 @@
   "litematica_container_filler.config.comment.materialReplacements": "Replace required materials in the schematic with another item.\nFormat: oldItemID->newItemID (e.g., minecraft:stone->minecraft:cobblestone).\nSupports named items using the # symbol (e.g., minecraft:stone#Filter1->minecraft:dirt#Filter2).\nIf # is not used, the new item will inherit all original data (enchantments, names, etc.).\nMultiple rules can be added.",
   "litematica_container_filler.config.comment.enableQsExtraction": "Automatically open Shulker Boxes in your inventory to extract required items when materials run out.",
   "litematica_container_filler.config.comment.autoStashItems": "When enabled, automatically stashes unrelated items into a Shulker Box if your inventory is full to free up space.",
+  "litematica_container_filler.config.comment.dropExtractedItems": "When enabled, the machine will drop incorrect or excess items on the ground instead of returning them to your inventory.",
   "litematica_container_filler.config.comment.enableOpNbtQuery": "When enabled and you have server OP permissions, the mod will actively request data for unopened containers from the server.",
-  "litematica_container_filler.config.comment.enableSafetyDelay": "Disabling this will make the machine ignore safety interval delays and fill at maximum speed (may cause bugs or result in a server kick).\nUse with caution.",
+  "litematica_container_filler.config.comment.enableSafetyDelay": "Disabling this will make the machine ignore all delays and fill at maximum speed (may cause bugs or result in a server kick).\nUse with caution.",
 
   "litematica_container_filler.config.comment.highlightColorUnfilled": "Color for containers that are completely empty but require items. Use hex ARGB format.",
   "litematica_container_filler.config.comment.highlightColorPartial": "Color for containers that have required items but insufficient amounts, or items in wrong slots. Use hex ARGB format.",
@@ -90,5 +92,6 @@
   "litematica_container_filler.message.inventory_full_stash_disabled": "§c[Container Filler] Inventory full and auto-stash disabled, cannot extract.",
   "litematica_container_filler.message.fill_completed": "§a[Container Filler] Target container fill completed!",
   "litematica_container_filler.message.returning_items": "§e[Container Filler] Processing extra materials and retrieving stashed items...",
-  "litematica_container_filler.message.container_timeout": "§c[Container Filler] Container response timeout, operation aborted to protect your workflow."
+  "litematica_container_filler.message.container_timeout": "§c[Container Filler] Container response timeout, operation aborted to protect your workflow.",
+  "litematica_container_filler.message.etc": " etc."
 }
