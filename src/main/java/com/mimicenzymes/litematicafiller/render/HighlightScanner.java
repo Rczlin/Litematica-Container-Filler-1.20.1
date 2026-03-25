@@ -40,10 +40,9 @@ public class HighlightScanner {
         }
 
         boolean hideCompleted = Configs.HIDE_COMPLETED_CONTAINERS.getBooleanValue();
-        boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue(); // 提前获取渲染层开关状态
+        boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
 
         for (BlockPos pos : HIGHLIGHT_MAP.keySet()) {
-            // 【核心修复】：如果开启了跟随渲染层，且该方块已经不在渲染层内了，立刻将其从高亮列表中剔除！
             if (syncLayer && !fi.dy.masa.litematica.data.DataManager.getRenderLayerRange().isPositionWithinRange(pos)) {
                 HIGHLIGHT_MAP.remove(pos);
                 continue;
@@ -61,7 +60,6 @@ public class HighlightScanner {
 
             Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
 
-            // 【保障同步】在计算高亮时应用材料替换，防止错误爆红
             com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
 
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
@@ -98,7 +96,6 @@ public class HighlightScanner {
             maxIndex = side * side * side;
         }
 
-        // 移除这里重复声明的 boolean syncLayer，因为上面已经声明过了
         int r = currentRadius;
         long startTime = System.nanoTime();
         int processed = 0;
@@ -127,7 +124,6 @@ public class HighlightScanner {
 
             Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
 
-            // 【保障同步】在初次扫图时应用材料替换
             com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
 
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;

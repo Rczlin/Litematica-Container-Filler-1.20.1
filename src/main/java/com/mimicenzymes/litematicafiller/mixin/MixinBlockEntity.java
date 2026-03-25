@@ -12,8 +12,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(BlockEntity.class)
 public class MixinBlockEntity {
 
-    @Inject(method = "createNbt", at = @At("RETURN"))
-    private void onCreateNbt(RegistryWrapper.WrapperLookup registries, CallbackInfoReturnable<NbtCompound> cir) {
+    @Inject(method = {
+            "createNbt",
+            "createNbtWithIdentifyingData"
+    }, at = @At("RETURN"))
+    private void onSerializeNbtAny(RegistryWrapper.WrapperLookup registries, CallbackInfoReturnable<NbtCompound> cir) {
         net.minecraft.world.World world = ((BlockEntity) (Object) this).getWorld();
         if (world != null && world.isClient() && world.getClass().getSimpleName().contains("Schematic")) {
             NbtCompound nbt = cir.getReturnValue();
