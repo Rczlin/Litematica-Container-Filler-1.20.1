@@ -91,7 +91,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                     } catch (Exception e) {}
                 }
                 mimic_isMonitorRunning = false;
-                System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 界面关闭，看门狗已安全退出。");
             });
             monitor.setDaemon(true);
             monitor.setName("LitematicaFiller-MergeWatchdog");
@@ -257,9 +256,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             String currentLayerHash = getRenderLayerHash();
 
             if (currentHash == mimic_lastContentHash && currentLayerHash.equals(mimic_lastLayerHash)) return;
-
-            System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 监测到原生数据 或 渲染层变动! 强制开始融合...");
-
             if (FillMaterialCalculator.listMode == 1) {
                 FillMaterialCalculator.calculate(this, true);
                 List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList();
@@ -326,8 +322,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                 }
 
                 rawMaterials.addAll(toAdd);
-                System.out.println("[LitematicaFiller-DEBUG] [Watchdog] 融合大成功！合并了 " + mergeCount + " 个共有方块，追加了 " + appendCount + " 个容器物品！");
-
                 mimic_lastContentHash = calculateContentHash(rawMaterials);
                 mimic_lastLayerHash = currentLayerHash;
 
