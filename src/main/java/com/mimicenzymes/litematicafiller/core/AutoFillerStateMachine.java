@@ -333,7 +333,6 @@ public class AutoFillerStateMachine {
             }
             if (!hasItemsToFill) {
                 if (!Configs.AUTO_STASH_ITEMS.getBooleanValue() || findStashAction(client, currentTask.missingItems.values()) == null) {
-                    // 如果丢弃开关被开启，允许即使无格子也能强行启动（利用掉落化解死锁）
                     if (!Configs.DROP_EXTRACTED_ITEMS.getBooleanValue()) {
                         sendFeedback(client, Text.translatable("litematica_container_filler.message.inventory_full_no_stash").getString(), true);
                         return false;
