@@ -66,7 +66,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
         this.addButton(toggleBtn, (button, mouseButton) -> {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
-            System.out.println("[LitematicaFiller-DEBUG] [1.GUI] 按钮被点击! 当前模式切换为 listMode = " + FillMaterialCalculator.listMode);
 
             mimic_lastContentHash = -1;
             mimic_lastLayerHash = "";

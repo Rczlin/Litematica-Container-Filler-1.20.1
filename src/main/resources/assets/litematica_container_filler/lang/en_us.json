@@ -93,5 +93,8 @@
   "litematica_container_filler.message.fill_completed": "§a[Container Filler] Target container fill completed!",
   "litematica_container_filler.message.returning_items": "§e[Container Filler] Processing extra materials and retrieving stashed items...",
   "litematica_container_filler.message.container_timeout": "§c[Container Filler] Container response timeout, operation aborted to protect your workflow.",
-  "litematica_container_filler.message.etc": " etc."
+  "litematica_container_filler.message.user_aborted": "§e[Container Filler] Interface closed by user. Task terminated.",
+  "litematica_container_filler.message.etc": " etc.",
+  "litematica_container_filler.config.name.creativeFill": "Creative Mode Auto Fill",
+  "litematica_container_filler.config.comment.creativeFill": "When enabled, in Creative mode the machine will ignore inventory material limits and generate required items out of thin air.\nYou need to have at least 1 empty slot in your inventory for the generation."
 }

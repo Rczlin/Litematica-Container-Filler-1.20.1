@@ -23,6 +23,7 @@ public class Configs {
     public static final ConfigBoolean ENABLE_OP_NBT_QUERY = new ConfigBoolean("litematica_container_filler.config.name.enableOpNbtQuery", true, "litematica_container_filler.config.comment.enableOpNbtQuery");
 
     //自动物流设置
+    public static final ConfigBoolean ENABLE_CREATIVE_FILL = new ConfigBoolean("litematica_container_filler.config.name.creativeFill", true, "litematica_container_filler.config.comment.creativeFill");
     public static final ConfigBoolean ENABLE_QS_EXTRACTION = new ConfigBoolean("litematica_container_filler.config.name.enableQsExtraction", true, "litematica_container_filler.config.comment.enableQsExtraction");
     public static final ConfigBoolean AUTO_STASH_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.autoStashItems", true, "litematica_container_filler.config.comment.autoStashItems");
     public static final ConfigBoolean DROP_EXTRACTED_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.dropExtractedItems", false, "litematica_container_filler.config.comment.dropExtractedItems");
@@ -54,6 +55,7 @@ public class Configs {
         builder.add(ENABLE_DATA_SYNC, ENABLE_OP_NBT_QUERY);
 
         // 物流
+        builder.add(ENABLE_CREATIVE_FILL);
         // 只在检测到安装了 Quick Shulker 时，才向菜单中加入该选项
         if (DependencyChecker.HAS_QUICK_SHULKER) {
             builder.add(ENABLE_QS_EXTRACTION);

@@ -14,7 +14,8 @@ public class ServuxSyncHandler {
     public static final Map<BlockPos, Map<Integer, ItemStack>> INDEPENDENT_CACHE = new ConcurrentHashMap<>();
 
     private static boolean minihudChecked = false;
-    private static boolean hasMinihud = false;
+    private static Class<?> minihudCacheClass = null;
+    private static Class<?> minihudSenderClass = null;
     private static boolean payloadsRegistered = false;
 
     public static void registerPayloads() {
@@ -32,46 +33,112 @@ public class ServuxSyncHandler {
             });
             payloadsRegistered = true;
         } catch (Exception ignored) {}
+
     }
 
     private static void checkMinihud() {
         if (!minihudChecked) {
-            try {
-                Class.forName("fi.dy.masa.minihud.inventory.InventoryCache");
-                hasMinihud = true;
-            } catch (Throwable t) {
-                hasMinihud = false;
+            String[] cacheClasses = {
+                    "fi.dy.masa.minihud.feature.InventoryCache",
+                    "fi.dy.masa.minihud.inventory.InventoryCache",
+                    "fi.dy.masa.minihud.util.InventoryCache"
+            };
+            for (String c : cacheClasses) {
+                try { minihudCacheClass = Class.forName(c); break; } catch (Throwable ignored) {}
             }
+
+            String[] senderClasses = {
+                    "fi.dy.masa.minihud.network.ClientPacketSender",
+                    "fi.dy.masa.minihud.network.PacketSender"
+            };
+            for (String c : senderClasses) {
+                try { minihudSenderClass = Class.forName(c); break; } catch (Throwable ignored) {}
+            }
+
             minihudChecked = true;
         }
     }
 
-    @SuppressWarnings("unchecked")
+    private static Map<Integer, ItemStack> extractItemsFromObject(Object obj) {
+        if (obj == null) return null;
+        Map<Integer, ItemStack> map = new HashMap<>();
+
+        if (obj instanceof java.util.Collection<?> list) {
+            int slot = 0;
+            for (Object item : list) {
+                if (item instanceof ItemStack stack && !stack.isEmpty()) map.put(slot, stack.copy());
+                slot++;
+            }
+            if (!map.isEmpty()) return map;
+        }
+        else if (obj instanceof ItemStack[] arr) {
+            for (int i = 0; i < arr.length; i++) {
+                if (arr[i] != null && !arr[i].isEmpty()) map.put(i, arr[i].copy());
+            }
+            if (!map.isEmpty()) return map;
+        }
+
+        try {
+            for (java.lang.reflect.Field f : obj.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(obj);
+
+                if (val instanceof java.util.Collection<?> list) {
+                    int slot = 0;
+                    for (Object item : list) {
+                        if (item instanceof ItemStack stack && !stack.isEmpty()) map.put(slot, stack.copy());
+                        slot++;
+                    }
+                    if (!map.isEmpty()) return map;
+                }
+                else if (val instanceof ItemStack[] arr) {
+                    for (int i = 0; i < arr.length; i++) {
+                        if (arr[i] != null && !arr[i].isEmpty()) map.put(i, arr[i].copy());
+                    }
+                    if (!map.isEmpty()) return map;
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        return null;
+    }
+
     public static Map<Integer, ItemStack> getCachedData(BlockPos pos) {
         checkMinihud();
 
-        // 偷你缓存气不气
-        if (hasMinihud) {
+        if (minihudCacheClass != null) {
             try {
-                Class<?> cacheClass = Class.forName("fi.dy.masa.minihud.inventory.InventoryCache");
+                for (java.lang.reflect.Field f : minihudCacheClass.getDeclaredFields()) {
+                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && Map.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        Map<?, ?> map = (Map<?, ?>) f.get(null);
+                        if (map != null) {
+                            Object result = map.get(pos);
+                            if (result != null) {
+                                Map<Integer, ItemStack> extracted = extractItemsFromObject(result);
+                                if (extracted != null && !extracted.isEmpty()) return extracted;
+                            }
+                        }
+                    }
+                }
+
                 Object cacheInstance = null;
-                for (java.lang.reflect.Method m : cacheClass.getDeclaredMethods()) {
-                    if (m.getName().equals("getInstance") && m.getParameterCount() == 0) {
+                for (java.lang.reflect.Method m : minihudCacheClass.getDeclaredMethods()) {
+                    if (m.getName().equals("getInstance") && m.getParameterCount() == 0 && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
                         cacheInstance = m.invoke(null); break;
                     }
                 }
-                if (cacheInstance != null) {
-                    for (java.lang.reflect.Method m : cacheClass.getDeclaredMethods()) {
-                        if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == BlockPos.class && m.getReturnType() == java.util.List.class) {
-                            java.util.List<ItemStack> list = (java.util.List<ItemStack>) m.invoke(cacheInstance, pos);
-                            if (list != null && !list.isEmpty()) {
-                                Map<Integer, ItemStack> map = new HashMap<>();
-                                for (int i = 0; i < list.size(); i++) {
-                                    ItemStack stack = list.get(i);
-                                    if (stack != null && !stack.isEmpty()) map.put(i, stack.copy());
-                                }
-                                return map;
-                            }
+
+                for (java.lang.reflect.Method m : minihudCacheClass.getDeclaredMethods()) {
+                    if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == BlockPos.class) {
+                        m.setAccessible(true);
+                        boolean isStatic = java.lang.reflect.Modifier.isStatic(m.getModifiers());
+                        if (!isStatic && cacheInstance == null) continue;
+
+                        Object result = isStatic ? m.invoke(null, pos) : m.invoke(cacheInstance, pos);
+                        if (result != null) {
+                            Map<Integer, ItemStack> extracted = extractItemsFromObject(result);
+                            if (extracted != null && !extracted.isEmpty()) return extracted;
                         }
                     }
                 }
@@ -84,19 +151,19 @@ public class ServuxSyncHandler {
     public static boolean requestData(BlockPos pos) {
         checkMinihud();
 
-        if (hasMinihud) {
+        if (minihudSenderClass != null) {
             try {
-                Class<?> senderClass = Class.forName("fi.dy.masa.minihud.network.ClientPacketSender");
-                for (java.lang.reflect.Method m : senderClass.getDeclaredMethods()) {
+                for (java.lang.reflect.Method m : minihudSenderClass.getDeclaredMethods()) {
                     if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == BlockPos.class) {
                         String name = m.getName().toLowerCase();
-                        if (name.contains("container") || name.contains("inventory") || name.contains("request") || name.contains("data")) {
+                        if (name.contains("container") || name.contains("inventory") || name.contains("request") || name.contains("data") || name.contains("sync")) {
+                            m.setAccessible(true);
                             m.invoke(null, pos);
                             return true;
                         }
                     }
                 }
-            } catch (Throwable t) {}
+            } catch (Throwable ignored) {}
         }
 
         if (payloadsRegistered && ClientPlayNetworking.canSend(ServuxRequestPayload.ID)) {
