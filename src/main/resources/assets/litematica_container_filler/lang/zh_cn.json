@@ -93,5 +93,8 @@
   "litematica_container_filler.message.fill_completed": "§a[容器填充] 目标容器填充完成！",
   "litematica_container_filler.message.returning_items": "§e[容器填充] 正在处理多余材料及取回暂存的杂物...",
   "litematica_container_filler.message.container_timeout": "§c[容器填充] 容器响应超时，已中断操作以保护您的操作流。",
-  "litematica_container_filler.message.etc": " 等"
+  "litematica_container_filler.message.user_aborted": "§e[容器填充] 用户手动关闭界面，已强行终止任务。",
+  "litematica_container_filler.message.etc": " 等",
+  "litematica_container_filler.config.name.creativeFill": "创造模式直接填充",
+  "litematica_container_filler.config.comment.creativeFill": "开启后，在创造模式下将无视背包材料限制凭空填充所需的物品。\n你的背包内需要至少有1个空格子用于填充。"
 }

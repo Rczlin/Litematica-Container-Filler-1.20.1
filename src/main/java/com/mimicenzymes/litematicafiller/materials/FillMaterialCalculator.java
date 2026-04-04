@@ -1,11 +1,14 @@
 package com.mimicenzymes.litematicafiller.materials;
 
+import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
 import com.mimicenzymes.litematicafiller.core.MaterialReplacer;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
+import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
@@ -13,11 +16,43 @@ import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 public class FillMaterialCalculator {
     public static boolean isFillMode = false;
     public static int listMode = 0;
+
+    public static class ItemStackKey {
+        public final Item item;
+        public final String customName;
+
+        public ItemStackKey(ItemStack stack) {
+            this.item = stack.getItem();
+            net.minecraft.text.Text name = stack.get(DataComponentTypes.CUSTOM_NAME);
+            this.customName = name != null ? name.getString() : "";
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof ItemStackKey)) return false;
+            ItemStackKey that = (ItemStackKey) o;
+            return item.equals(that.item) && customName.equals(that.customName);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * item.hashCode() + customName.hashCode();
+        }
+    }
 
     private static class ItemStats {
         int totalAll = 0, missingAll = 0, availableAll = 0, mismatchAll = 0;
@@ -34,7 +69,7 @@ public class FillMaterialCalculator {
         }
     }
 
-    private static final Map<Item, ItemStats> itemStatsCache = new HashMap<>();
+    private static final Map<ItemStackKey, ItemStats> itemStatsCache = new HashMap<>();
 
     private interface LayerFilter {
         boolean test(int absoluteY, int relativeY);
@@ -188,7 +223,6 @@ public class FillMaterialCalculator {
             }
 
             Map<Integer, ItemStack> required = RealContainerCache.parseNbtInventory(ctx.nbt, client.world.getRegistryManager());
-
             MaterialReplacer.replaceInMap(required);
 
             BlockPos mainPos = pos;
@@ -206,8 +240,6 @@ public class FillMaterialCalculator {
 
                     if (nbtMap.containsKey(otherPos)) {
                         Map<Integer, ItemStack> otherReq = RealContainerCache.parseNbtInventory(nbtMap.get(otherPos).nbt, client.world.getRegistryManager());
-
-                        // 【核心恢复】：同时替换另外半边箱子
                         MaterialReplacer.replaceInMap(otherReq);
 
                         if (isPrimary) {
@@ -248,48 +280,51 @@ public class FillMaterialCalculator {
             Map<Integer, ItemStack> realItems = RealContainerCache.getCachedItems(mainPos);
             if (realItems == null) realItems = new HashMap<>();
 
-            Map<Item, Integer> reqAgg = new HashMap<>();
-            Map<Item, Integer> realAgg = new HashMap<>();
+            Map<ItemStackKey, Integer> reqAgg = new HashMap<>();
+            Map<ItemStackKey, Integer> realAgg = new HashMap<>();
 
             for (ItemStack s : required.values()) {
-                reqAgg.merge(s.getItem(), s.getCount(), Integer::sum);
-                ItemStats stats = itemStatsCache.computeIfAbsent(s.getItem(), k -> new ItemStats());
+                ItemStackKey key = new ItemStackKey(s);
+                reqAgg.merge(key, s.getCount(), Integer::sum);
+                ItemStats stats = itemStatsCache.computeIfAbsent(key, k -> new ItemStats());
                 if (stats.representative.isEmpty()) stats.representative = s.copy();
             }
 
             for (ItemStack s : realItems.values()) {
-                realAgg.merge(s.getItem(), s.getCount(), Integer::sum);
+                ItemStackKey key = new ItemStackKey(s);
+                realAgg.merge(key, s.getCount(), Integer::sum);
             }
 
-            for (Map.Entry<Item, Integer> e : reqAgg.entrySet()) {
-                Item item = e.getKey();
+            for (Map.Entry<ItemStackKey, Integer> e : reqAgg.entrySet()) {
+                ItemStackKey key = e.getKey();
                 int req = e.getValue();
-                int real = realAgg.getOrDefault(item, 0);
+                int real = realAgg.getOrDefault(key, 0);
 
-                ItemStats stats = itemStatsCache.get(item);
+                ItemStats stats = itemStatsCache.get(key);
+
                 int matched = Math.min(req, real);
 
                 foundItemsAll += req;
                 stats.totalAll += req;
-                stats.availableAll += real;
+                stats.availableAll += matched;
                 stats.missingAll += Math.max(0, req - matched);
 
                 if (inLayer) {
                     foundItemsLayer += req;
                     stats.totalLayer += req;
-                    stats.availableLayer += real;
+                    stats.availableLayer += matched;
                     stats.missingLayer += Math.max(0, req - matched);
                 }
             }
 
-            for (Map.Entry<Item, Integer> e : realAgg.entrySet()) {
-                Item item = e.getKey();
+            for (Map.Entry<ItemStackKey, Integer> e : realAgg.entrySet()) {
+                ItemStackKey key = e.getKey();
                 int real = e.getValue();
-                int req = reqAgg.getOrDefault(item, 0);
+                int req = reqAgg.getOrDefault(key, 0);
 
                 if (real > req) {
-                    ItemStats stats = itemStatsCache.computeIfAbsent(item, k -> new ItemStats());
-                    if (stats.representative.isEmpty()) stats.representative = new ItemStack(item);
+                    ItemStats stats = itemStatsCache.computeIfAbsent(key, k -> new ItemStats());
+                    if (stats.representative.isEmpty()) stats.representative = new ItemStack(key.item);
 
                     stats.mismatchAll += (real - req);
                     if (inLayer) {
@@ -322,76 +357,39 @@ public class FillMaterialCalculator {
         return fMode.equals("ALL") || fMode.equals("NORMAL") || fMode.equals("NONE") || fMode.equals("全部") || fMode.equals("所有");
     }
 
-    private static String extractButtonText(Object btn) {
-        if (btn == null) return "";
-        if (btn instanceof String) return (String) btn;
-        if (btn.getClass().isEnum()) return ((Enum<?>)btn).name();
+    private static String extractStringValueSafe(Object val) {
+        if (val == null) return "ALL";
+        if (val instanceof String s) return s;
+        if (val instanceof Enum<?> e) return e.name();
 
         try {
-            Object textObj = btn.getClass().getMethod("getMessage").invoke(btn);
-            if (textObj != null) return (String) textObj.getClass().getMethod("getString").invoke(textObj);
+            Object enumVal = val.getClass().getMethod("getOptionListValue").invoke(val);
+            if (enumVal != null) {
+                if (enumVal instanceof Enum<?>) return ((Enum<?>) enumVal).name();
+                try { return (String) enumVal.getClass().getMethod("name").invoke(enumVal); } catch (Exception e) {}
+                try { return (String) enumVal.getClass().getMethod("getStringValue").invoke(enumVal); } catch (Exception e) {}
+                return enumVal.toString();
+            }
         } catch (Exception e) {}
-        try { return (String) btn.getClass().getMethod("getDisplayString").invoke(btn); } catch (Exception e) {}
 
-        Class<?> c = btn.getClass();
-        while (c != null && c != Object.class) {
-            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
-                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
-                try {
-                    f.setAccessible(true);
-                    Object val = f.get(btn);
-                    if (val instanceof String) {
-                        String s = (String) val;
-                        if (isRelevantText(s)) return s;
-                    } else if (val != null && val.getClass().getName().contains("Text") && !val.getClass().getName().contains("TextField")) {
-                        try {
-                            String s = (String) val.getClass().getMethod("getString").invoke(val);
-                            if (isRelevantText(s)) return s;
-                        } catch (Exception ex) {}
-                    }
-                } catch (Exception e) {}
-            }
-            c = c.getSuperclass();
-        }
-        return "";
+        try { return (String) val.getClass().getMethod("getStringValue").invoke(val); } catch (Exception e) {}
+        try {
+            Object objVal = val.getClass().getMethod("getValue").invoke(val);
+            if (objVal instanceof Enum<?> e) return e.name();
+            if (objVal != null) return objVal.toString();
+        } catch (Exception e) {}
+        return val.toString();
     }
 
-    private static boolean isRelevantText(String s) {
-        if (s == null) return false;
-        String upper = s.toUpperCase();
-        return upper.contains("SHOW") || upper.contains("DISPLAY") || upper.contains("TYPE") || upper.contains("显示") || upper.contains("类型") ||
-                upper.contains("LAYER") || upper.contains("RENDER") || upper.contains("渲染层") || upper.contains("MATERIAL") || upper.contains("材料") ||
-                upper.equals("ALL") || upper.contains("全部") || upper.contains("所有") ||
-                upper.contains("HIDE") || upper.contains("AVAILABLE") || upper.contains("MISSING") || upper.contains("隐藏") || upper.contains("可用") || upper.contains("缺失");
-    }
-
-    private static void parseWidget(Object widget, boolean[] flags) {
-        if (widget == null) return;
-        String text = extractButtonText(widget);
-        if (text != null && !text.isEmpty()) {
-            String upper = text.toUpperCase().replace(" ", "").replace(":", "").replace("：", "");
-
-            if (upper.contains("HIDEAVAILABLE") || upper.contains("隐藏已有") || upper.contains("隐藏可用") || upper.contains("MISSING") || upper.contains("缺失") || upper.contains("AVAILABLE") || upper.contains("可用")) {
-                if (upper.contains("ON") || upper.contains("开启") || upper.contains("TRUE") || upper.contains("是") || upper.contains("MISSING") || upper.contains("缺失")) flags[2] = true;
-                else if (upper.contains("OFF") || upper.contains("关闭") || upper.contains("FALSE") || upper.contains("否") || upper.contains("AVAILABLE") || upper.contains("可用")) flags[3] = true;
-            }
-
-            if (upper.startsWith("SHOW") || upper.startsWith("DISPLAY") || upper.startsWith("显示") ||
-                    upper.contains("显示类型") || upper.contains("材料列表") || upper.contains("MATERIALLIST") || upper.contains("RENDERLAYER")) {
-
-                boolean wantsLayer = upper.contains("LAYER") || upper.contains("RENDER") || upper.contains("渲染层") || upper.contains("可见") || upper.contains("VISIBLE");
-                boolean wantsAll = upper.contains("全部") || upper.contains("所有") || upper.equals("ALL") || upper.contains("SHOWALL") || upper.contains("DISPLAYALL") || upper.contains("TYPEALL");
-
-                if (wantsLayer) {
-                    flags[1] = true;
-                } else if (wantsAll) {
-                    flags[0] = true;
-                }
-            }
-
-            if (upper.equals("ALL") || upper.equals("全部")) flags[0] = true;
-            if (upper.equals("VISIBLE") || upper.equals("可见") || upper.equals("RENDERLAYER") || upper.equals("渲染层")) flags[1] = true;
-        }
+    private static Integer extractIntegerSafe(Object val) {
+        if (val == null) return null;
+        if (val instanceof Integer i) return i;
+        if (val instanceof Number n) return n.intValue();
+        try { return (Integer) val.getClass().getMethod("getIntegerValue").invoke(val); } catch (Exception e) {}
+        try { return (Integer) val.getClass().getMethod("getIntValue").invoke(val); } catch (Exception e) {}
+        try { return Integer.parseInt(val.toString()); } catch (Exception e) {}
+        try { return Integer.parseInt(extractStringValueSafe(val)); } catch (Exception e) {}
+        return null;
     }
 
     private static void parseConfigField(String cleanName, Object val, MathConfig out) {
@@ -488,41 +486,6 @@ public class FillMaterialCalculator {
         return null;
     }
 
-    private static String extractStringValueSafe(Object val) {
-        if (val == null) return "ALL";
-        if (val instanceof String s) return s;
-        if (val instanceof Enum<?> e) return e.name();
-
-        try {
-            Object enumVal = val.getClass().getMethod("getOptionListValue").invoke(val);
-            if (enumVal != null) {
-                if (enumVal instanceof Enum<?>) return ((Enum<?>) enumVal).name();
-                try { return (String) enumVal.getClass().getMethod("name").invoke(enumVal); } catch (Exception e) {}
-                try { return (String) enumVal.getClass().getMethod("getStringValue").invoke(enumVal); } catch (Exception e) {}
-                return enumVal.toString();
-            }
-        } catch (Exception e) {}
-
-        try { return (String) val.getClass().getMethod("getStringValue").invoke(val); } catch (Exception e) {}
-        try {
-            Object objVal = val.getClass().getMethod("getValue").invoke(val);
-            if (objVal instanceof Enum<?> e) return e.name();
-            if (objVal != null) return objVal.toString();
-        } catch (Exception e) {}
-        return val.toString();
-    }
-
-    private static Integer extractIntegerSafe(Object val) {
-        if (val == null) return null;
-        if (val instanceof Integer i) return i;
-        if (val instanceof Number n) return n.intValue();
-        try { return (Integer) val.getClass().getMethod("getIntegerValue").invoke(val); } catch (Exception e) {}
-        try { return (Integer) val.getClass().getMethod("getIntValue").invoke(val); } catch (Exception e) {}
-        try { return Integer.parseInt(val.toString()); } catch (Exception e) {}
-        try { return Integer.parseInt(extractStringValueSafe(val)); } catch (Exception e) {}
-        return null;
-    }
-
     private static int getIntFromNbt(NbtElement elem) {
         if (elem instanceof net.minecraft.nbt.AbstractNbtNumber num) return num.intValue();
         return 0;
@@ -602,17 +565,12 @@ public class FillMaterialCalculator {
 
     public static List<MaterialListEntry> getCustomMaterialList() {
         boolean limitToLayer = true;
-        boolean hideAvailable = false;
 
         try {
             for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
                 String cleanName = f.getName().toUpperCase().replace("_", "");
 
-                if (cleanName.contains("MATERIAL_LIST") && cleanName.contains("HIDE") && cleanName.contains("AVAILABLE")) {
-                    Object cb = f.get(null);
-                    hideAvailable = (Boolean) cb.getClass().getMethod("getBooleanValue").invoke(cb);
-                }
-
+                // 获取图层过滤设置
                 if (cleanName.equals("MATERIALLISTDISPLAYTYPE") || cleanName.equals("MATERIALLISTLIMITTOLAYER") || cleanName.equals("MATERIALLISTIGNORERENDERLAYER")) {
                     Object opt = f.get(null);
                     if (opt != null) {
@@ -636,61 +594,10 @@ public class FillMaterialCalculator {
             }
         } catch (Exception ignored) {}
 
-        boolean[] flags = new boolean[4];
-        MinecraftClient client = MinecraftClient.getInstance();
-
-        if (client.currentScreen != null) {
-            Object gui = client.currentScreen;
-            boolean isMaterialListGui = false;
-            Class<?> checkCls = gui.getClass();
-            while (checkCls != null && checkCls != Object.class) {
-                if (checkCls.getSimpleName().contains("MaterialList")) {
-                    isMaterialListGui = true;
-                    break;
-                }
-                checkCls = checkCls.getSuperclass();
-            }
-
-            if (isMaterialListGui) {
-                Class<?> curr = gui.getClass();
-                while (curr != null && curr != Object.class) {
-                    for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
-                        f.setAccessible(true);
-                        try {
-                            Object val = f.get(gui);
-                            if (val == null) continue;
-
-                            if (val instanceof List) {
-                                for (Object item : (List<?>) val) {
-                                    parseWidget(item, flags);
-                                }
-                            }
-                            else if (val.getClass().isArray()) {
-                                for (Object item : (Object[]) val) {
-                                    parseWidget(item, flags);
-                                }
-                            }
-                            else {
-                                parseWidget(val, flags);
-                            }
-                        } catch (Exception e) {}
-                    }
-                    curr = curr.getSuperclass();
-                }
-            }
-        }
-
-        if (flags[1]) {
-            limitToLayer = true;
-        } else if (flags[0]) {
-            limitToLayer = false;
-        }
-
-        if (flags[2]) hideAvailable = true;
-        else if (flags[3]) hideAvailable = false;
 
         List<MaterialListEntry> list = new ArrayList<>();
-        for (Map.Entry<Item, ItemStats> entry : itemStatsCache.entrySet()) {
+
+        for (Map.Entry<ItemStackKey, ItemStats> entry : itemStatsCache.entrySet()) {
             ItemStats stats = entry.getValue();
 
             int total = limitToLayer ? stats.totalLayer : stats.totalAll;
@@ -700,16 +607,13 @@ public class FillMaterialCalculator {
 
             if (total == 0 && missing == 0 && available == 0 && mismatch == 0) continue;
 
-            if (hideAvailable && missing <= 0 && mismatch <= 0) {
-                continue;
-            }
-
             ItemStack stack = stats.representative;
-            if (stack.isEmpty()) stack = new ItemStack(entry.getKey());
+            if (stack.isEmpty()) stack = new ItemStack(entry.getKey().item);
 
             MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, mismatch);
             list.add(matEntry);
         }
+
         return list;
     }
 }

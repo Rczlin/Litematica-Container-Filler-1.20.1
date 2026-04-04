@@ -33,9 +33,7 @@ public record ServuxResponsePayload(BlockPos pos, Map<Integer, ItemStack> items)
                             parsedItems.put(slot, stack);
                         }
                     }
-                } catch (Exception e) {
-                    System.err.println("[LitematicaFiller] 脱离 MiniHUD 独立解析 Servux 数据失败，协议不匹配: " + e.getMessage());
-                }
+                } catch (Exception ignored) {}
 
                 return new ServuxResponsePayload(parsedPos != null ? parsedPos : BlockPos.ORIGIN, parsedItems);
             }

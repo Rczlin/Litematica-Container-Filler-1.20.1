@@ -28,6 +28,9 @@ public class AreaScanner {
         int count = 0;
         long now = System.currentTimeMillis();
 
+        int maxTasks = isSilentPrinter ? 15 : 40;
+
+        scanLoop:
         for (int x = -r; x <= r; x++) {
             for (int y = -r; y <= r; y++) {
                 for (int z = -r; z <= r; z++) {
@@ -37,9 +40,6 @@ public class AreaScanner {
 
                     BlockState state = schematicWorld.getBlockState(pos);
                     if (state.isAir() || !state.hasBlockEntity()) continue;
-
-                    BlockState realState = mc.world.getBlockState(pos);
-                    if (state.getBlock() != realState.getBlock()) continue;
 
                     BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
                     if (halves != null) {
@@ -61,6 +61,10 @@ public class AreaScanner {
                     AutoFillerStateMachine.getInstance().addTask(pos, required == null ? new HashMap<>() : required);
                     ATTEMPT_COOLDOWNS.put(pos, now);
                     count++;
+
+                    if (count >= maxTasks) {
+                        break scanLoop;
+                    }
                 }
             }
         }

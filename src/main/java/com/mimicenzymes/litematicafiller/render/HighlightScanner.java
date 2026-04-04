@@ -9,6 +9,8 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -16,18 +18,39 @@ public class HighlightScanner {
     private static final Map<BlockPos, HighlightState> HIGHLIGHT_MAP = new ConcurrentHashMap<>();
     private static final Map<BlockPos, HighlightState> NEXT_HIGHLIGHT_MAP = new ConcurrentHashMap<>();
 
+    private static final Map<BlockPos, Map<Integer, ItemStack>> SCHEMATIC_REQ_CACHE = new ConcurrentHashMap<>();
+
     private static int scanIndex = 0;
     private static int currentRadius = 0;
     private static BlockPos currentCenter = null;
+    private static int tickCounter = 0;
 
-    private static final int BLOCKS_PER_TICK = 50000;
-    private static final long TIME_BUDGET_NANOS = 10_000_000L;
+    private static final long MAX_NANOS_PER_TICK = 2_000_000L;
+
+    private static List<BlockPos> refreshKeys = new ArrayList<>();
+    private static int refreshIndex = 0;
 
     public static Map<BlockPos, HighlightState> getHighlights() {
         return HIGHLIGHT_MAP;
     }
 
+    public static void clearCache() {
+        SCHEMATIC_REQ_CACHE.clear();
+    }
+
+    private static Map<Integer, ItemStack> getCachedSchematicReq(BlockPos pos, MinecraftClient client) {
+        Map<Integer, ItemStack> req = SCHEMATIC_REQ_CACHE.get(pos);
+        if (req == null) {
+            req = LitematicaContainerReader.getRequiredItems(pos, client.world.getRegistryManager());
+            if (req != null) {
+                SCHEMATIC_REQ_CACHE.put(pos, req);
+            }
+        }
+        return req;
+    }
+
     public static void tick(MinecraftClient client) {
+        tickCounter++;
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
             if (!HIGHLIGHT_MAP.isEmpty()) HIGHLIGHT_MAP.clear();
             return;
@@ -38,49 +61,66 @@ public class HighlightScanner {
         var schematicWorld = fi.dy.masa.litematica.world.SchematicWorldHandler.getSchematicWorld();
         if (schematicWorld == null) {
             if (!HIGHLIGHT_MAP.isEmpty()) HIGHLIGHT_MAP.clear();
+            if (!SCHEMATIC_REQ_CACHE.isEmpty()) SCHEMATIC_REQ_CACHE.clear();
             return;
         }
 
+        if (tickCounter % 100 == 0) SCHEMATIC_REQ_CACHE.clear();
+
         boolean hideCompleted = Configs.HIDE_COMPLETED_CONTAINERS.getBooleanValue();
         boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
-        var layerRange = fi.dy.masa.litematica.data.DataManager.getRenderLayerRange();
 
-        for (BlockPos pos : HIGHLIGHT_MAP.keySet()) {
-            if (syncLayer && !layerRange.isPositionWithinRange(pos)) {
-                HIGHLIGHT_MAP.remove(pos);
-                continue;
+        long startTime = System.nanoTime();
+
+        if (!HIGHLIGHT_MAP.isEmpty()) {
+            if (refreshKeys.size() != HIGHLIGHT_MAP.size() || tickCounter % 40 == 0) {
+                refreshKeys = new ArrayList<>(HIGHLIGHT_MAP.keySet());
             }
 
-            BlockState state = schematicWorld.getBlockState(pos);
-            BlockState realState = client.world.getBlockState(pos);
+            if (!refreshKeys.isEmpty()) {
+                int loopCount = 0;
+                while (loopCount < refreshKeys.size()) {
+                    // 【时间片限流】复查阶段最多只允许占用当前帧的 1 毫秒
+                    if (System.nanoTime() - startTime > 1_000_000L) break;
 
-            if (!state.hasBlockEntity() || state.getBlock() != realState.getBlock()) {
-                HIGHLIGHT_MAP.remove(pos);
-                continue;
-            }
+                    if (refreshIndex >= refreshKeys.size()) refreshIndex = 0;
+                    BlockPos pos = refreshKeys.get(refreshIndex);
+                    refreshIndex++;
+                    loopCount++;
 
-            BlockPos checkPos = pos;
-            BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
-            if (halves != null) checkPos = halves[0];
+                    if (syncLayer && !fi.dy.masa.litematica.data.DataManager.getRenderLayerRange().isPositionWithinRange(pos)) {
+                        HIGHLIGHT_MAP.remove(pos);
+                        continue;
+                    }
 
-            Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
-            com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
+                    BlockState state = schematicWorld.getBlockState(pos);
+                    if (state.isAir() || !state.hasBlockEntity()) {
+                        HIGHLIGHT_MAP.remove(pos);
+                        continue;
+                    }
 
-            boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
-            boolean hasJob = (required != null && !required.isEmpty()) || isCrafter;
+                    BlockPos checkPos = pos;
+                    BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
+                    if (halves != null) checkPos = halves[0];
 
-            if (!hasJob) {
-                HIGHLIGHT_MAP.remove(pos);
-                continue;
-            }
+                    Map<Integer, ItemStack> required = getCachedSchematicReq(checkPos, client);
+                    boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
+                    boolean hasJob = (required != null && !required.isEmpty()) || isCrafter;
 
-            Map<Integer, ItemStack> cached = RealContainerCache.getCachedItems(checkPos);
-            HighlightState type = (cached == null) ? HighlightState.UNKNOWN : evaluateState(cached, required, isCrafter, checkPos, client);
+                    if (!hasJob) {
+                        HIGHLIGHT_MAP.remove(pos);
+                        continue;
+                    }
 
-            if (hideCompleted && type == HighlightState.SATISFIED) {
-                HIGHLIGHT_MAP.remove(pos);
-            } else {
-                HIGHLIGHT_MAP.put(pos, type);
+                    Map<Integer, ItemStack> cached = RealContainerCache.getCachedItems(checkPos);
+                    HighlightState type = (cached == null) ? HighlightState.UNKNOWN : evaluateState(cached, required, isCrafter, checkPos, client);
+
+                    if (hideCompleted && type == HighlightState.SATISFIED) {
+                        HIGHLIGHT_MAP.remove(pos);
+                    } else {
+                        HIGHLIGHT_MAP.put(pos, type);
+                    }
+                }
             }
         }
 
@@ -101,50 +141,29 @@ public class HighlightScanner {
         }
 
         int r = currentRadius;
-        long startTime = System.nanoTime();
-        int processed = 0;
 
-        int cx = currentCenter.getX();
-        int cy = currentCenter.getY();
-        int cz = currentCenter.getZ();
+        while (scanIndex < maxIndex) {
+            if (System.nanoTime() - startTime > MAX_NANOS_PER_TICK) {
+                break;
+            }
 
-        BlockPos.Mutable mPos = new BlockPos.Mutable();
-
-        while (processed < BLOCKS_PER_TICK && scanIndex < maxIndex) {
             int x = (scanIndex % side) - r;
             int y = ((scanIndex / side) % side) - r;
             int z = ((scanIndex / (side * side)) % side) - r;
             scanIndex++;
-            processed++;
 
-            if (processed % 5000 == 0 && (System.nanoTime() - startTime > TIME_BUDGET_NANOS)) {
-                break;
-            }
+            BlockPos pos = currentCenter.add(x, y, z);
 
-            mPos.set(cx + x, cy + y, cz + z);
+            if (syncLayer && !fi.dy.masa.litematica.data.DataManager.getRenderLayerRange().isPositionWithinRange(pos)) continue;
 
-            if (syncLayer && !layerRange.isPositionWithinRange(mPos)) continue;
-
-            BlockState state = schematicWorld.getBlockState(mPos);
-            if (!state.hasBlockEntity()) continue;
-
-            BlockState realState = client.world.getBlockState(mPos);
-            if (state.getBlock() != realState.getBlock()) continue;
-
-            BlockPos pos = mPos.toImmutable();
-
-            if (HIGHLIGHT_MAP.containsKey(pos)) {
-                NEXT_HIGHLIGHT_MAP.put(pos, HIGHLIGHT_MAP.get(pos));
-                continue;
-            }
+            BlockState state = schematicWorld.getBlockState(pos);
+            if (state.isAir() || !state.hasBlockEntity()) continue;
 
             BlockPos checkPos = pos;
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
             if (halves != null) checkPos = halves[0];
 
-            Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(checkPos, client.world.getRegistryManager());
-            com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInMap(required);
-
+            Map<Integer, ItemStack> required = getCachedSchematicReq(checkPos, client);
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
             boolean hasJob = (required != null && !required.isEmpty()) || isCrafter;
 
@@ -160,10 +179,10 @@ public class HighlightScanner {
                 type = evaluateState(cached, required, isCrafter, checkPos, client);
             }
 
-            NEXT_HIGHLIGHT_MAP.put(pos, type);
+            NEXT_HIGHLIGHT_MAP.put(pos.toImmutable(), type);
 
             if (!(hideCompleted && type == HighlightState.SATISFIED)) {
-                HIGHLIGHT_MAP.put(pos, type);
+                HIGHLIGHT_MAP.put(pos.toImmutable(), type);
             }
         }
     }

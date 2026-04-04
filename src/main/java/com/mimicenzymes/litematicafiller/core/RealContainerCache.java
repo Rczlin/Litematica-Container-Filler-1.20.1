@@ -32,8 +32,18 @@ public class RealContainerCache {
     private static final Map<BlockPos, Long> LAST_REQUEST_TIME = new ConcurrentHashMap<>();
     private static int transactionCounter = 10000;
 
+    private static int cacheVersion = 0;
+
+    public static int getCacheVersion() {
+        return cacheVersion;
+    }
+
     public static void tick(MinecraftClient client) {
         if (client.world == null || client.player == null) return;
+
+        if (client.world.getTime() % 100 == 0) {
+            PENDING_NBT_REQUESTS.clear();
+        }
 
         if (client.currentScreen == null && client.crosshairTarget instanceof BlockHitResult bhr) {
             lastLookedPos = bhr.getBlockPos();
@@ -94,6 +104,8 @@ public class RealContainerCache {
             }
             LOCK_CACHE.put(pos.toImmutable(), locks);
         }
+
+        cacheVersion++;
     }
 
     public static Map<Integer, ItemStack> getCachedItems(BlockPos pos) {
@@ -103,12 +115,16 @@ public class RealContainerCache {
         if (schematicWorld != null) {
             BlockState state = schematicWorld.getBlockState(pos);
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
-            if (halves != null) {
-                Map<Integer, ItemStack> right = ServuxSyncHandler.getCachedData(halves[0]);
-                if (right == null) right = NBT_QUERY_CACHE.get(halves[0]);
 
-                Map<Integer, ItemStack> left = ServuxSyncHandler.getCachedData(halves[1]);
-                if (left == null) left = NBT_QUERY_CACHE.get(halves[1]);
+            if (halves != null) {
+                // 【核心修复】：MiniHUD / Servux 返回的是完整的 54 格数据，绝对不能再次叠加位移！
+                Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(halves[0]);
+                if (servuxData == null) servuxData = ServuxSyncHandler.getCachedData(halves[1]);
+                if (servuxData != null) return servuxData;
+
+                // 只有原版 NBT 查询单方块实体，才会返回半截箱子（27格），此时才需要合并
+                Map<Integer, ItemStack> right = NBT_QUERY_CACHE.get(halves[0]);
+                Map<Integer, ItemStack> left = NBT_QUERY_CACHE.get(halves[1]);
 
                 if (right != null || left != null) {
                     Map<Integer, ItemStack> combined = new HashMap<>();
@@ -131,7 +147,6 @@ public class RealContainerCache {
     public static void requestContainerData(BlockPos pos) {
         long now = System.currentTimeMillis();
         if (now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < 2000) return;
-        LAST_REQUEST_TIME.put(pos, now);
 
         boolean isDouble = false;
         BlockPos[] halves = null;
@@ -146,13 +161,23 @@ public class RealContainerCache {
             if (isDouble) {
                 boolean s1 = ServuxSyncHandler.requestData(halves[0]);
                 boolean s2 = ServuxSyncHandler.requestData(halves[1]);
-                if (s1 || s2) return;
+                if (s1 || s2) {
+                    LAST_REQUEST_TIME.put(pos, now);
+                    return;
+                }
             } else {
-                if (ServuxSyncHandler.requestData(pos)) return;
+                if (ServuxSyncHandler.requestData(pos)) {
+                    LAST_REQUEST_TIME.put(pos, now);
+                    return;
+                }
             }
         }
 
         if (!Configs.ENABLE_OP_NBT_QUERY.getBooleanValue()) return;
+
+        if (PENDING_NBT_REQUESTS.size() > 60) return;
+
+        LAST_REQUEST_TIME.put(pos, now);
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player == null || client.getNetworkHandler() == null) return;
 
@@ -186,6 +211,8 @@ public class RealContainerCache {
                 if (nbt.contains("disabled_slots")) {
                     LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
                 }
+
+                cacheVersion++;
             }
         }
     }
@@ -195,6 +222,7 @@ public class RealContainerCache {
     public static void putLock(BlockPos pos, Set<Integer> locks) {
         if (pos == null || locks == null) return;
         LOCK_CACHE.put(pos.toImmutable(), locks);
+        cacheVersion++;
     }
 
     public static boolean isSatisfied(BlockPos pos, Map<Integer, ItemStack> required) {
@@ -297,10 +325,38 @@ public class RealContainerCache {
         PENDING_NBT_REQUESTS.clear();
         LAST_REQUEST_TIME.clear();
         ServuxSyncHandler.INDEPENDENT_CACHE.clear();
+        cacheVersion++;
     }
 
     public static void put(BlockPos pos, Map<Integer, ItemStack> items) {
         if (pos == null || items == null) return;
         CACHE.put(pos.toImmutable(), items);
+        cacheVersion++;
+    }
+
+    public static void remove(BlockPos pos) {
+        if (pos == null) return;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world != null) {
+            BlockState state = client.world.getBlockState(pos);
+            BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, pos, state);
+            if (halves != null) {
+                CACHE.remove(halves[0]);
+                CACHE.remove(halves[1]);
+                NBT_QUERY_CACHE.remove(halves[0]);
+                NBT_QUERY_CACHE.remove(halves[1]);
+                ServuxSyncHandler.INDEPENDENT_CACHE.remove(halves[0]);
+                ServuxSyncHandler.INDEPENDENT_CACHE.remove(halves[1]);
+                LAST_REQUEST_TIME.remove(halves[0]);
+                LAST_REQUEST_TIME.remove(halves[1]);
+            }
+        }
+
+        CACHE.remove(pos);
+        NBT_QUERY_CACHE.remove(pos);
+        ServuxSyncHandler.INDEPENDENT_CACHE.remove(pos);
+        LAST_REQUEST_TIME.remove(pos);
+        cacheVersion++;
     }
 }

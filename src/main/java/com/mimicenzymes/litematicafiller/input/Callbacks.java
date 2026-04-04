@@ -81,10 +81,7 @@ public class Callbacks implements IHotkeyCallback {
                 if (required != null || needsLocking) {
                     Map<Integer, ItemStack> taskReq = required == null ? new HashMap<>() : required;
 
-                    if (RealContainerCache.isSatisfied(pos, taskReq) && !needsLocking) {
-                        mc.player.sendMessage(Text.translatable("litematica_container_filler.message.already_satisfied"), true);
-                        return;
-                    }
+                    RealContainerCache.remove(pos);
 
                     AutoFillerStateMachine.getInstance().addTask(pos, taskReq);
                 }

@@ -37,11 +37,11 @@ public abstract class MixinGuiMaterialList extends GuiBase {
         int targetY = 26;
 
         try {
-            List<?> buttons = null;
+            java.util.List<?> buttons = null;
             for (java.lang.reflect.Field f : GuiBase.class.getDeclaredFields()) {
-                if (f.getType() == List.class && f.getName().toLowerCase().contains("button")) {
+                if (f.getType() == java.util.List.class && f.getName().toLowerCase().contains("button")) {
                     f.setAccessible(true);
-                    buttons = (List<?>) f.get(this);
+                    buttons = (java.util.List<?>) f.get(this);
                     break;
                 }
             }
@@ -66,7 +66,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
         this.addButton(toggleBtn, (button, mouseButton) -> {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
-            System.out.println("[LitematicaFiller-DEBUG] [1.GUI] 按钮被点击! 当前模式切换为 listMode = " + FillMaterialCalculator.listMode);
 
             mimic_lastContentHash = -1;
             mimic_lastLayerHash = "";
@@ -99,7 +98,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
     }
 
     @Unique
-    private long calculateContentHash(List<Object> list) {
+    private long calculateContentHash(java.util.List<Object> list) {
         long hash = 0;
         for (Object obj : list) {
             ItemStack stack = getStackFromEntry(obj);
@@ -120,11 +119,11 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             sb.append(com.mimicenzymes.litematicafiller.config.Configs.SYNC_LITE_LAYER.getBooleanValue()).append("_");
 
             try {
-                List<?> buttons = null;
-                for (java.lang.reflect.Field f : GuiBase.class.getDeclaredFields()) {
-                    if (f.getType() == List.class && f.getName().toLowerCase().contains("button")) {
+                java.util.List<?> buttons = null;
+                for (java.lang.reflect.Field f : fi.dy.masa.malilib.gui.GuiBase.class.getDeclaredFields()) {
+                    if (f.getType() == java.util.List.class && f.getName().toLowerCase().contains("button")) {
                         f.setAccessible(true);
-                        buttons = (List<?>) f.get(this);
+                        buttons = (java.util.List<?>) f.get(this);
                         break;
                     }
                 }
@@ -179,7 +178,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                             }
                             for (java.lang.reflect.Method m : p.getClass().getMethods()) {
                                 if (m.getName().equals("getConfigs") && m.getParameterCount() == 0) {
-                                    List<?> configs = (List<?>) m.invoke(p);
+                                    java.util.List<?> configs = (java.util.List<?>) m.invoke(p);
                                     if (configs != null) {
                                         for (Object cfg : configs) {
                                             try {
@@ -229,18 +228,18 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             }
             if (materialListObj == null) return;
 
-            List<Object> rawMaterials = null;
+            java.util.List<Object> rawMaterials = null;
             Class<?> curr = materialListObj.getClass();
             while (curr != null && rawMaterials == null) {
                 for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
-                    if (List.class.isAssignableFrom(f.getType())) {
+                    if (java.util.List.class.isAssignableFrom(f.getType())) {
                         String fName = f.getName().toLowerCase();
                         if (fName.contains("material") || fName.contains("list") || fName.equals("m_materials")) {
                             f.setAccessible(true);
-                            List<?> list = (List<?>) f.get(materialListObj);
+                            java.util.List<?> list = (java.util.List<?>) f.get(materialListObj);
                             if (list != null) {
                                 if (list.isEmpty() || (!list.isEmpty() && list.get(0).getClass().getSimpleName().contains("MaterialListEntry"))) {
-                                    rawMaterials = (List<Object>) list;
+                                    rawMaterials = (java.util.List<Object>) list;
                                     break;
                                 }
                             }
@@ -282,7 +281,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                     return;
                 }
 
-                List<Object> toAdd = new java.util.ArrayList<>();
+                java.util.List<Object> toAdd = new java.util.ArrayList<>();
                 int mergeCount = 0;
                 int appendCount = 0;
 
