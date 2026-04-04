@@ -337,7 +337,6 @@ public class RealContainerCache {
     public static void remove(BlockPos pos) {
         if (pos == null) return;
 
-        // 【核心修复】：如果是大箱子，强制双开清理！确切毁灭两边的旧缓存
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world != null) {
             BlockState state = client.world.getBlockState(pos);
