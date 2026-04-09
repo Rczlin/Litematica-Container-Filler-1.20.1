@@ -80,7 +80,6 @@ public class HighlightScanner {
             if (!refreshKeys.isEmpty()) {
                 int loopCount = 0;
                 while (loopCount < refreshKeys.size()) {
-                    // 【时间片限流】复查阶段最多只允许占用当前帧的 1 毫秒
                     if (System.nanoTime() - startTime > 1_000_000L) break;
 
                     if (refreshIndex >= refreshKeys.size()) refreshIndex = 0;

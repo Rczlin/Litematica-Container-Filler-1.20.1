@@ -1,5 +1,6 @@
 package com.mimicenzymes.litematicafiller.mixin;
 
+import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.core.AutoFillerStateMachine;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
@@ -12,11 +13,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 // 拦截原版Minecraft客户端的屏幕渲染
 @Mixin(MinecraftClient.class)
 public class ScreenInterceptorMixin {
-
     @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
     private void interceptScreen(Screen screen, CallbackInfo ci) {
-        if (screen instanceof HandledScreen && AutoFillerStateMachine.getInstance().isSilentlyExtracting()) {
-            ci.cancel();
+        if (screen instanceof HandledScreen && Configs.HIDE_FILLER_GUI.getBooleanValue()) {
+            if (AutoFillerStateMachine.getInstance().isWorking()) {
+                ci.cancel();
+            }
         }
     }
 }
