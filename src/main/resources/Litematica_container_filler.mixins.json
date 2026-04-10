@@ -11,7 +11,8 @@
     "MixinGuiMaterialList",
     "MixinBlockEntity",
     "MixinLootableContainerBlockEntity",
-    "MixinCrafterBlockEntity"
+    "MixinCrafterBlockEntity",
+    "MixinSchematicPlacement"
   ],
   "injectors": {
     "defaultRequire": 1

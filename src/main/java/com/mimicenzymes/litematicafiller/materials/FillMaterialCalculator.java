@@ -563,14 +563,89 @@ public class FillMaterialCalculator {
         }
     }
 
-    public static List<MaterialListEntry> getCustomMaterialList() {
+    private static boolean isItemIgnored(Object materialListObj, Item item) {
+        if (materialListObj != null) {
+            try {
+                for (java.lang.reflect.Method m : materialListObj.getClass().getMethods()) {
+                    String name = m.getName().toLowerCase();
+                    if (name.contains("ignore") && m.getReturnType() == boolean.class && m.getParameterCount() == 1) {
+                        Class<?> pType = m.getParameterTypes()[0];
+                        if (pType == Item.class) {
+                            return (Boolean) m.invoke(materialListObj, item);
+                        } else if (pType == net.minecraft.util.Identifier.class) {
+                            return (Boolean) m.invoke(materialListObj, net.minecraft.registry.Registries.ITEM.getId(item));
+                        } else if (pType.getSimpleName().equals("ItemType")) {
+                            try {
+                                Object itemType = pType.getConstructor(Item.class).newInstance(item);
+                                return (Boolean) m.invoke(materialListObj, itemType);
+                            } catch (Exception e) {}
+                        }
+                    }
+                }
+
+                Class<?> currClass = materialListObj.getClass();
+                while (currClass != null && currClass != Object.class) {
+                    for (java.lang.reflect.Field f : currClass.getDeclaredFields()) {
+                        if (java.util.Collection.class.isAssignableFrom(f.getType())) {
+                            String fName = f.getName().toLowerCase();
+                            if (fName.contains("ignore")) {
+                                f.setAccessible(true);
+                                java.util.Collection<?> coll = (java.util.Collection<?>) f.get(materialListObj);
+                                if (coll != null && !coll.isEmpty()) {
+                                    if (coll.contains(item)) return true;
+                                    net.minecraft.util.Identifier id = net.minecraft.registry.Registries.ITEM.getId(item);
+                                    if (coll.contains(id) || coll.contains(id.toString()) || coll.contains(id.getPath())) return true;
+
+                                    for (Object obj : coll) {
+                                        if (obj == null) continue;
+                                        if (obj == item) return true;
+                                        try {
+                                            for (java.lang.reflect.Method m : obj.getClass().getMethods()) {
+                                                if (m.getParameterCount() == 0 && m.getReturnType() == Item.class) {
+                                                    if (m.invoke(obj) == item) return true;
+                                                }
+                                            }
+                                        } catch (Exception ignored) {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    currClass = currClass.getSuperclass();
+                }
+            } catch (Exception ignored) {}
+        }
+
+        try {
+            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
+                String cleanName = f.getName().toUpperCase().replace("_", "");
+                if (cleanName.equals("MATERIALLISTIGNORETYPES")) {
+                    Object opt = f.get(null);
+                    if (opt != null) {
+                        @SuppressWarnings("unchecked")
+                        List<String> ignoredList = (List<String>) opt.getClass().getMethod("getStrings").invoke(opt);
+                        if (ignoredList != null && !ignoredList.isEmpty()) {
+                            net.minecraft.util.Identifier id = net.minecraft.registry.Registries.ITEM.getId(item);
+                            if (ignoredList.contains(id.toString()) || ignoredList.contains(id.getPath())) {
+                                return true;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        } catch (Exception ignored) {}
+
+        return false;
+    }
+
+    public static List<MaterialListEntry> getCustomMaterialList(Object materialListObj) {
         boolean limitToLayer = true;
 
         try {
             for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
                 String cleanName = f.getName().toUpperCase().replace("_", "");
 
-                // 获取图层过滤设置
                 if (cleanName.equals("MATERIALLISTDISPLAYTYPE") || cleanName.equals("MATERIALLISTLIMITTOLAYER") || cleanName.equals("MATERIALLISTIGNORERENDERLAYER")) {
                     Object opt = f.get(null);
                     if (opt != null) {
@@ -594,10 +669,13 @@ public class FillMaterialCalculator {
             }
         } catch (Exception ignored) {}
 
-
         List<MaterialListEntry> list = new ArrayList<>();
 
         for (Map.Entry<ItemStackKey, ItemStats> entry : itemStatsCache.entrySet()) {
+            if (isItemIgnored(materialListObj, entry.getKey().item)) {
+                continue;
+            }
+
             ItemStats stats = entry.getValue();
 
             int total = limitToLayer ? stats.totalLayer : stats.totalAll;

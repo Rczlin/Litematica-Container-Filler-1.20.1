@@ -20,15 +20,29 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
     @Unique
     private long mimic_lastContentHash = -1;
-
     @Unique
     private String mimic_lastLayerHash = "";
-
     @Unique
     private boolean mimic_isMonitorRunning = false;
+    @Unique
+    private boolean mimic_needsCalculation = true;
+    @Unique
+    private final java.util.Map<String, long[]> mimic_injections = new java.util.HashMap<>();
+    @Unique
+    private final java.util.Set<String> mimic_appendedKeys = new java.util.HashSet<>();
+
+    @Unique
+    private String mimic_getItemKey(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return "";
+        String id = net.minecraft.registry.Registries.ITEM.getId(stack.getItem()).toString();
+        net.minecraft.text.Text name = stack.get(net.minecraft.component.DataComponentTypes.CUSTOM_NAME);
+        return id + "|" + (name != null ? name.getString() : "");
+    }
 
     @Inject(method = "initGui", at = @At("RETURN"))
     private void onInitGui(CallbackInfo ci) {
+        mimic_needsCalculation = true;
+
         String text = StringUtils.translate("litematica_container_filler.gui.button.mode_blocks_only");
         if (FillMaterialCalculator.listMode == 1) text = StringUtils.translate("litematica_container_filler.gui.button.mode_containers_only");
         else if (FillMaterialCalculator.listMode == 2) text = StringUtils.translate("litematica_container_filler.gui.button.mode_both");
@@ -69,6 +83,7 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
             mimic_lastContentHash = -1;
             mimic_lastLayerHash = "";
+            mimic_needsCalculation = true;
 
             triggerNativeRecalculate();
             this.initGui();
@@ -113,6 +128,104 @@ public abstract class MixinGuiMaterialList extends GuiBase {
     }
 
     @Unique
+    private boolean mimic_isItemIgnored(Object materialListObj, ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return false;
+        net.minecraft.item.Item item = stack.getItem();
+        String fullId = net.minecraft.registry.Registries.ITEM.getId(item).toString();
+        String path = net.minecraft.registry.Registries.ITEM.getId(item).getPath();
+
+        try {
+            if (materialListObj != null) {
+                for (java.lang.reflect.Method m : materialListObj.getClass().getMethods()) {
+                    if (m.getReturnType() == boolean.class && m.getName().toLowerCase().contains("ignore")) {
+                        Class<?>[] pTypes = m.getParameterTypes();
+                        if (pTypes.length == 1) {
+                            Class<?> pType = pTypes[0];
+                            try {
+                                if (pType.isAssignableFrom(ItemStack.class)) {
+                                    return (Boolean) m.invoke(materialListObj, stack);
+                                } else if (pType.isAssignableFrom(net.minecraft.item.Item.class)) {
+                                    return (Boolean) m.invoke(materialListObj, item);
+                                } else {
+                                    Object paramObj = null;
+                                    try { paramObj = pType.getConstructor(ItemStack.class, boolean.class).newInstance(stack, true); } catch (Exception e1) {
+                                        try { paramObj = pType.getConstructor(ItemStack.class).newInstance(stack); } catch (Exception e2) {
+                                            try { paramObj = pType.getConstructor(net.minecraft.item.Item.class).newInstance(item); } catch (Exception e3) {}
+                                        }
+                                    }
+                                    if (paramObj != null) {
+                                        return (Boolean) m.invoke(materialListObj, paramObj);
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                }
+
+                Class<?> curr = materialListObj.getClass();
+                while (curr != null && curr != Object.class) {
+                    for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
+                        if (java.util.Collection.class.isAssignableFrom(f.getType()) && f.getName().toLowerCase().contains("ignore")) {
+                            f.setAccessible(true);
+                            java.util.Collection<?> coll = (java.util.Collection<?>) f.get(materialListObj);
+                            if (coll != null) {
+                                for (Object ignoredObj : coll) {
+                                    if (ignoredObj == null) continue;
+
+                                    ItemStack s = getStackFromEntry(ignoredObj);
+                                    if (s != null && s.getItem() == item) return true;
+
+                                    try {
+                                        for (java.lang.reflect.Method m : ignoredObj.getClass().getMethods()) {
+                                            if (m.getParameterCount() == 0 && m.getReturnType() == net.minecraft.item.Item.class) {
+                                                if (m.invoke(ignoredObj) == item) return true;
+                                            } else if (m.getParameterCount() == 0 && m.getReturnType() == ItemStack.class) {
+                                                ItemStack is = (ItemStack) m.invoke(ignoredObj);
+                                                if (is != null && is.getItem() == item) return true;
+                                            }
+                                        }
+                                    } catch (Exception ignored) {}
+
+                                    if (ignoredObj.toString().contains(path)) return true;
+                                }
+                            }
+                        }
+                    }
+                    curr = curr.getSuperclass();
+                }
+            }
+
+            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
+                String fName = f.getName().toUpperCase();
+                if (fName.contains("IGNORE") && (fName.contains("TYPE") || fName.contains("ITEM") || fName.contains("MAT"))) {
+                    Object opt = f.get(null);
+                    if (opt != null) {
+                        try {
+                            java.util.List<?> strings = (java.util.List<?>) opt.getClass().getMethod("getStrings").invoke(opt);
+                            if (strings != null) {
+                                for (Object o : strings) {
+                                    String s = o.toString();
+                                    if (s.equalsIgnoreCase(fullId) || s.equalsIgnoreCase(path)) return true;
+                                }
+                            }
+                        } catch (Exception e1) {
+                            try {
+                                String val = (String) opt.getClass().getMethod("getStringValue").invoke(opt);
+                                if (val != null) {
+                                    for (String s : val.replace("[", "").replace("]", "").split(",")) {
+                                        if (s.trim().equalsIgnoreCase(fullId) || s.trim().equalsIgnoreCase(path)) return true;
+                                    }
+                                }
+                            } catch (Exception e2) {}
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    @Unique
     private String getRenderLayerHash() {
         StringBuilder sb = new StringBuilder();
         try {
@@ -150,7 +263,25 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                             sb.append(bVal).append("_");
                         } catch (Exception ignored) {}
                     }
-                } else if (name.contains("MATERIAL_LIST") && (name.contains("LAYER") || name.contains("MODE") || name.contains("TYPE"))) {
+                }
+                else if (name.contains("IGNORE") && (name.contains("TYPE") || name.contains("ITEM") || name.contains("MAT"))) {
+                    Object opt = f.get(null);
+                    if (opt != null) {
+                        try {
+                            java.util.List<?> list = (java.util.List<?>) opt.getClass().getMethod("getStrings").invoke(opt);
+                            if (list != null) {
+                                for (Object o : list) sb.append(o.toString()).append(",");
+                                sb.append("_");
+                            }
+                        } catch (Exception e1) {
+                            try {
+                                String sVal = (String) opt.getClass().getMethod("getStringValue").invoke(opt);
+                                sb.append(sVal).append("_");
+                            } catch (Exception e2) {}
+                        }
+                    }
+                }
+                else if (name.contains("MATERIAL_LIST") && (name.contains("LAYER") || name.contains("MODE") || name.contains("TYPE"))) {
                     Object opt = f.get(null);
                     if (opt != null) {
                         try {
@@ -173,26 +304,6 @@ public abstract class MixinGuiMaterialList extends GuiBase {
                                     if (f.getType() == int.class) {
                                         f.setAccessible(true);
                                         sb.append(f.getInt(layerRange)).append("_");
-                                    }
-                                }
-                            }
-                            for (java.lang.reflect.Method m : p.getClass().getMethods()) {
-                                if (m.getName().equals("getConfigs") && m.getParameterCount() == 0) {
-                                    java.util.List<?> configs = (java.util.List<?>) m.invoke(p);
-                                    if (configs != null) {
-                                        for (Object cfg : configs) {
-                                            try {
-                                                String sVal = (String) cfg.getClass().getMethod("getStringValue").invoke(cfg);
-                                                sb.append(sVal).append("_");
-                                            } catch (Exception e1) {
-                                                try {
-                                                    boolean bVal = (Boolean) cfg.getClass().getMethod("getBooleanValue").invoke(cfg);
-                                                    sb.append(bVal).append("_");
-                                                } catch (Exception e2) {
-                                                    sb.append(cfg.toString()).append("_");
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -228,6 +339,8 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             }
             if (materialListObj == null) return;
 
+            final Object finalMaterialListObj = materialListObj;
+
             java.util.List<Object> rawMaterials = null;
             Class<?> curr = materialListObj.getClass();
             while (curr != null && rawMaterials == null) {
@@ -253,11 +366,47 @@ public abstract class MixinGuiMaterialList extends GuiBase {
 
             long currentHash = calculateContentHash(rawMaterials);
             String currentLayerHash = getRenderLayerHash();
-
             if (currentHash == mimic_lastContentHash && currentLayerHash.equals(mimic_lastLayerHash)) return;
-            if (FillMaterialCalculator.listMode == 1) {
+            for (int i = rawMaterials.size() - 1; i >= 0; i--) {
+                Object eObj = rawMaterials.get(i);
+                ItemStack stack = getStackFromEntry(eObj);
+                String key = mimic_getItemKey(stack);
+
+                if (mimic_appendedKeys.contains(key)) {
+                    rawMaterials.remove(i);
+                } else if (mimic_injections.containsKey(key)) {
+                    long[] inj = mimic_injections.get(key);
+                    long bTotal = getCountField(eObj, 0) - inj[0];
+                    long bMissing = getCountField(eObj, 1) - inj[1];
+                    long bAvailable = getCountField(eObj, 2) - inj[2];
+                    long bMismatch = getCountField(eObj, 3) - inj[3];
+
+                    fi.dy.masa.litematica.materials.MaterialListEntry restored = new fi.dy.masa.litematica.materials.MaterialListEntry(
+                            stack, (int)bTotal, (int)Math.max(0, bMissing), (int)bAvailable, (int)bMismatch
+                    );
+                    rawMaterials.set(i, restored);
+                }
+            }
+            mimic_appendedKeys.clear();
+            mimic_injections.clear();
+            if (!currentLayerHash.equals(mimic_lastLayerHash)) {
+                mimic_lastLayerHash = currentLayerHash;
+                mimic_needsCalculation = true;
+                triggerNativeRecalculate();
+                return;
+            }
+
+            if (mimic_needsCalculation) {
                 FillMaterialCalculator.calculate(this, true);
-                List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList();
+                mimic_needsCalculation = false;
+            }
+
+            if (FillMaterialCalculator.listMode == 1) {
+                List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList(materialListObj);
+
+                if (containerEntries != null) {
+                    containerEntries.removeIf(entry -> mimic_isItemIgnored(finalMaterialListObj, getStackFromEntry(entry)));
+                }
 
                 rawMaterials.clear();
                 if (containerEntries != null && !containerEntries.isEmpty()) {
@@ -272,55 +421,66 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             }
 
             if (FillMaterialCalculator.listMode == 2) {
-                FillMaterialCalculator.calculate(this, true);
-                List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList();
+                List<fi.dy.masa.litematica.materials.MaterialListEntry> containerEntries = FillMaterialCalculator.getCustomMaterialList(materialListObj);
 
-                if (containerEntries.isEmpty()) {
-                    mimic_lastContentHash = currentHash;
+                if (containerEntries != null) {
+                    containerEntries.removeIf(entry -> mimic_isItemIgnored(finalMaterialListObj, getStackFromEntry(entry)));
+                }
+
+                if (containerEntries == null || containerEntries.isEmpty()) {
+                    mimic_lastContentHash = calculateContentHash(rawMaterials);
                     mimic_lastLayerHash = currentLayerHash;
                     return;
                 }
 
-                java.util.List<Object> toAdd = new java.util.ArrayList<>();
-                int mergeCount = 0;
-                int appendCount = 0;
+                java.util.Set<String> matchedKeys = new java.util.HashSet<>();
+                for (int i = 0; i < rawMaterials.size(); i++) {
+                    Object eObj = rawMaterials.get(i);
+                    ItemStack eStack = getStackFromEntry(eObj);
+                    if (eStack == null) continue;
+                    String eKey = mimic_getItemKey(eStack);
 
-                for (fi.dy.masa.litematica.materials.MaterialListEntry cEntry : containerEntries) {
-                    ItemStack cStack = getStackFromEntry(cEntry);
-                    long cTotal = getCountField(cEntry, 0);
-                    long cMissing = getCountField(cEntry, 1);
-                    long cAvailable = getCountField(cEntry, 2);
-                    long cMismatch = getCountField(cEntry, 3);
+                    long bTotal = getCountField(eObj, 0);
+                    long bMissing = getCountField(eObj, 1);
+                    long bAvailable = getCountField(eObj, 2);
+                    long bMismatch = getCountField(eObj, 3);
 
-                    boolean found = false;
-                    for (int i = 0; i < rawMaterials.size(); i++) {
-                        Object eObj = rawMaterials.get(i);
-                        ItemStack eStack = getStackFromEntry(eObj);
+                    for (fi.dy.masa.litematica.materials.MaterialListEntry cEntry : containerEntries) {
+                        ItemStack cStack = getStackFromEntry(cEntry);
+                        String cKey = mimic_getItemKey(cStack);
 
-                        if (eStack != null && cStack != null && com.mimicenzymes.litematicafiller.core.ItemMatcher.isSameItem(eStack, cStack)) {
-                            long eTotal = getCountField(eObj, 0);
-                            long eMissing = getCountField(eObj, 1);
-                            long eAvailableOld = getCountField(eObj, 2);
-                            long eMismatchOld = getCountField(eObj, 3);
+                        if (eKey.equals(cKey) && !matchedKeys.contains(cKey)) {
+                            matchedKeys.add(cKey);
+
+                            long cTotal = getCountField(cEntry, 0);
+                            long cMissing = getCountField(cEntry, 1);
+                            long cAvailable = getCountField(cEntry, 2);
+                            long cMismatch = getCountField(cEntry, 3);
 
                             fi.dy.masa.litematica.materials.MaterialListEntry merged = new fi.dy.masa.litematica.materials.MaterialListEntry(
-                                    eStack, (int)(eTotal + cTotal), (int)(eMissing + cMissing), (int)(eAvailableOld + cAvailable), (int)(eMismatchOld + cMismatch)
+                                    eStack,
+                                    (int)(bTotal + cTotal),
+                                    (int)Math.max(0, bMissing + cMissing),
+                                    (int)(bAvailable + cAvailable),
+                                    (int)(bMismatch + cMismatch)
                             );
-
                             rawMaterials.set(i, merged);
-                            found = true;
-                            mergeCount++;
+
+                            mimic_injections.put(eKey, new long[]{cTotal, cMissing, cAvailable, cMismatch});
                             break;
                         }
                     }
+                }
 
-                    if (!found) {
-                        toAdd.add(cEntry);
-                        appendCount++;
+                for (fi.dy.masa.litematica.materials.MaterialListEntry cEntry : containerEntries) {
+                    ItemStack cStack = getStackFromEntry(cEntry);
+                    String cKey = mimic_getItemKey(cStack);
+                    if (!matchedKeys.contains(cKey)) {
+                        rawMaterials.add(cEntry);
+                        mimic_appendedKeys.add(cKey);
                     }
                 }
 
-                rawMaterials.addAll(toAdd);
                 mimic_lastContentHash = calculateContentHash(rawMaterials);
                 mimic_lastLayerHash = currentLayerHash;
 
@@ -377,7 +537,14 @@ public abstract class MixinGuiMaterialList extends GuiBase {
             if (materialListObj != null) {
                 for (java.lang.reflect.Method m : materialListObj.getClass().getMethods()) {
                     String name = m.getName().toLowerCase();
-                    if (m.getParameterCount() == 0 && (name.equals("recalculate") || name.equals("refresh") || name.equals("update") || name.equals("recreatemateriallist") || name.equals("recalculatetotalupdate"))) {
+                    if (m.getParameterCount() == 0 && (name.equals("recreatemateriallist") || name.equals("recalculatetotalupdate") || name.equals("clearandupdate"))) {
+                        m.invoke(materialListObj);
+                        return;
+                    }
+                }
+                for (java.lang.reflect.Method m : materialListObj.getClass().getMethods()) {
+                    String name = m.getName().toLowerCase();
+                    if (m.getParameterCount() == 0 && (name.equals("recalculate") || name.equals("refresh") || name.equals("update"))) {
                         m.invoke(materialListObj);
                         return;
                     }
