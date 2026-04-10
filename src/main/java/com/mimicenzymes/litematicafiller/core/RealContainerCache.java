@@ -117,12 +117,10 @@ public class RealContainerCache {
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
 
             if (halves != null) {
-                // 【核心修复】：MiniHUD / Servux 返回的是完整的 54 格数据，绝对不能再次叠加位移！
                 Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(halves[0]);
                 if (servuxData == null) servuxData = ServuxSyncHandler.getCachedData(halves[1]);
                 if (servuxData != null) return servuxData;
 
-                // 只有原版 NBT 查询单方块实体，才会返回半截箱子（27格），此时才需要合并
                 Map<Integer, ItemStack> right = NBT_QUERY_CACHE.get(halves[0]);
                 Map<Integer, ItemStack> left = NBT_QUERY_CACHE.get(halves[1]);
 

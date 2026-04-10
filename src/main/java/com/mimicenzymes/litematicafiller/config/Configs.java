@@ -28,6 +28,7 @@ public class Configs {
     public static final ConfigBoolean AUTO_STASH_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.autoStashItems", true, "litematica_container_filler.config.comment.autoStashItems");
     public static final ConfigBoolean DROP_EXTRACTED_ITEMS = new ConfigBoolean("litematica_container_filler.config.name.dropExtractedItems", false, "litematica_container_filler.config.comment.dropExtractedItems");
     public static final ConfigBoolean ENABLE_SAFETY_DELAY = new ConfigBoolean("litematica_container_filler.config.name.enableSafetyDelay", true, "litematica_container_filler.config.comment.enableSafetyDelay");
+    public static final ConfigBoolean HIDE_FILLER_GUI = new ConfigBoolean("litematica_container_filler.config.name.hideFillerGui", true, "litematica_container_filler.config.comment.hideFillerGui");
 
     //高亮渲染基础设置
     public static final ConfigBoolean HIGHLIGHT_CONTAINERS = new ConfigBoolean("litematica_container_filler.config.name.highlightContainers", true, "litematica_container_filler.config.comment.highlightContainers");
@@ -60,7 +61,7 @@ public class Configs {
         if (DependencyChecker.HAS_QUICK_SHULKER) {
             builder.add(ENABLE_QS_EXTRACTION);
         }
-        builder.add(AUTO_STASH_ITEMS, DROP_EXTRACTED_ITEMS, ENABLE_SAFETY_DELAY);
+        builder.add(AUTO_STASH_ITEMS, DROP_EXTRACTED_ITEMS, ENABLE_SAFETY_DELAY, HIDE_FILLER_GUI);
 
         // 渲染
         builder.add(HIGHLIGHT_CONTAINERS, HIGHLIGHT_XRAY, RENDER_RADIUS, SYNC_LITE_LAYER, HIDE_COMPLETED_CONTAINERS);

@@ -37,6 +37,7 @@ public class AutoFillerStateMachine {
         AWAITING_DATA,
         INSPECTING,
         STASHING,
+        CREATIVE_PRINTING,
         GATHERING,
         FILLING,
         RETURNING
@@ -174,7 +175,7 @@ public class AutoFillerStateMachine {
         if (client.isInSingleplayer() && client.getServer() != null && client.world != null && client.player != null) {
             ServerPlayerEntity serverPlayer = client.getServer().getPlayerManager().getPlayer(client.player.getUuid());
             if (serverPlayer != null) {
-                ServerWorld serverWorld = (ServerWorld) serverPlayer.getEntityWorld();
+                ServerWorld serverWorld = (ServerWorld) serverPlayer.getWorld();
                 if (serverWorld != null) {
                     net.minecraft.block.BlockState clientState = client.world.getBlockState(finalPos);
                     final BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, finalPos, clientState);
@@ -242,7 +243,7 @@ public class AutoFillerStateMachine {
     }
 
     public void addTask(BlockPos pos, Map<Integer, ItemStack> requiredItems) {
-        if (requiredItems == null || requiredItems.isEmpty()) return;
+        if (requiredItems == null) return;
         if (failedContainers.containsKey(pos)) return;
         if (currentTask != null && currentTask.targetPos.equals(pos)) return;
         if (taskQueue.size() >= 20) return;
@@ -296,7 +297,7 @@ public class AutoFillerStateMachine {
     }
 
     public void addManualTask(BlockPos pos, Map<Integer, ItemStack> requiredItems) {
-        if (requiredItems == null || requiredItems.isEmpty()) return;
+        if (requiredItems == null) return;
         failedContainers.remove(pos);
         RealContainerCache.remove(pos);
 
@@ -1133,9 +1134,20 @@ public class AutoFillerStateMachine {
             if (delay > 0) { actionWaitTicks = delay; return; }
         }
 
-        if (handler instanceof CrafterScreenHandler crafterHandler && client.currentScreen instanceof HandledScreen<?> handledScreen) {
+        int containerSize = handler.slots.size() - 36;
+        if (handler instanceof CrafterScreenHandler) containerSize = 9;
+        if (containerSize <= 0) { finishTaskAndReturn(client); return; }
+
+        boolean movedAny = false;
+        boolean stillNeedsAction = false;
+        boolean swappedAnyInThisPass = false;
+        boolean extractedAnyInThisPass = false;
+
+        if (handler instanceof CrafterScreenHandler crafterHandler) {
+            HandledScreen<?> handledScreen = client.currentScreen instanceof HandledScreen<?> ? (HandledScreen<?>) client.currentScreen : null;
             Set<Integer> targetDisabled = LitematicaContainerReader.getDisabledSlots(currentTask.targetPos);
             boolean toggledInThisTick = false;
+
             for (int i = 0; i < 9; i++) {
                 boolean shouldBeDisabled = targetDisabled != null && targetDisabled.contains(i);
                 if (shouldBeDisabled != crafterHandler.isSlotDisabled(i)) {
@@ -1145,21 +1157,23 @@ public class AutoFillerStateMachine {
                     } else {
                         simulateSlotClick(handledScreen, crafterHandler.getSlot(i), i, 0, SlotActionType.PICKUP);
                     }
+
                     toggledInThisTick = true;
+                    movedAny = true;
+                    stillNeedsAction = true;
                     if (delay > 0) break;
                 }
             }
-            if (toggledInThisTick) { actionWaitTicks = delay; if (delay > 0) return; }
+
+            if (toggledInThisTick) {
+                if (delay > 0 || handledScreen == null) {
+                    actionWaitTicks = Math.max(2, delay);
+                    consecutiveFailures = 0;
+                    watchdogTimer = 0;
+                    return;
+                }
+            }
         }
-
-        int containerSize = handler.slots.size() - 36;
-        if (handler instanceof CrafterScreenHandler) containerSize = 9;
-        if (containerSize <= 0) { finishTaskAndReturn(client); return; }
-
-        boolean movedAny = false;
-        boolean stillNeedsAction = false;
-        boolean swappedAnyInThisPass = false;
-        boolean extractedAnyInThisPass = false;
 
         for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
             if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
@@ -1426,9 +1440,8 @@ public class AutoFillerStateMachine {
                     return;
                 }
 
-                if (client.currentScreen instanceof HandledScreen<?> hs) {
-                    RealContainerCache.updateFromScreen(client, hs);
-                }
+                RealContainerCache.updateFromHandler(client, handler);
+
                 actionQueue.add(() -> client.player.closeHandledScreen());
                 actionQueue.add(() -> actionWaitTicks = getDelay(1));
                 actionQueue.add(() -> checkAndStartGatheringOrFilling(client));
@@ -1439,9 +1452,11 @@ public class AutoFillerStateMachine {
     }
 
     private void finishTaskAndReturn(MinecraftClient client) {
-        if (client.currentScreen instanceof HandledScreen<?> hs) {
-            RealContainerCache.updateFromScreen(client, hs);
+        ScreenHandler currentHandler = client.player.currentScreenHandler;
+        if (currentHandler != client.player.playerScreenHandler) {
+            RealContainerCache.updateFromHandler(client, currentHandler);
         }
+
         sendFeedback(client, Text.translatable("litematica_container_filler.message.fill_completed").getString(), true);
 
         actionQueue.add(() -> client.player.closeHandledScreen());
@@ -1648,8 +1663,36 @@ public class AutoFillerStateMachine {
     public BlockPos getCurrentTaskPos() { return currentTask != null ? currentTask.targetPos : null; }
     public boolean isIdle() { return this.currentTask == null && this.actionQueue.isEmpty(); }
 
+    public boolean isWorking() { return !isIdle(); }
+
     private void simulateSlotClick(HandledScreen<?> screen, Slot slot, int slotId, int button, SlotActionType actionType) {
         try {
+            MinecraftClient client = MinecraftClient.getInstance();
+
+            if (screen == null) {
+                if (client.player.currentScreenHandler instanceof CrafterScreenHandler) {
+                    try {
+                        Class<?> cls = Class.forName("net.minecraft.client.gui.screen.ingame.CrafterScreen");
+                        screen = (HandledScreen<?>) cls.getConstructor(CrafterScreenHandler.class, net.minecraft.entity.player.PlayerInventory.class, net.minecraft.text.Text.class)
+                                .newInstance(client.player.currentScreenHandler, client.player.getInventory(), net.minecraft.text.Text.literal("Crafter"));
+
+                        Class<?> screenClass = net.minecraft.client.gui.screen.Screen.class;
+                        for (java.lang.reflect.Field f : screenClass.getDeclaredFields()) {
+                            if (f.getType() == MinecraftClient.class) {
+                                f.setAccessible(true);
+                                f.set(screen, client);
+                                break;
+                            }
+                        }
+                    } catch (Exception e) {}
+                }
+
+                if (screen == null) {
+                    client.interactionManager.clickSlot(client.player.currentScreenHandler.syncId, slotId, button, actionType, client.player);
+                    return;
+                }
+            }
+
             java.lang.reflect.Method targetMethod = null;
             Class<?> currClass = screen.getClass();
             while (currClass != null && targetMethod == null) {
@@ -1665,7 +1708,7 @@ public class AutoFillerStateMachine {
                 targetMethod.setAccessible(true);
                 targetMethod.invoke(screen, slot, slotId, button, actionType);
             } else {
-                MinecraftClient.getInstance().interactionManager.clickSlot(screen.getScreenHandler().syncId, slotId, button, actionType, MinecraftClient.getInstance().player);
+                client.interactionManager.clickSlot(screen.getScreenHandler().syncId, slotId, button, actionType, client.player);
             }
         } catch (Exception e) { e.printStackTrace(); }
     }
