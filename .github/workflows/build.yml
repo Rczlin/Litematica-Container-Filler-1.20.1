@@ -1,0 +1,104 @@
+name: Build (Matrix)
+
+on:
+  workflow_dispatch:   # 手动触发
+    inputs:
+      isRelease:
+        description: '是否创建 Release'
+        type: boolean
+        default: false
+      releaseTag:
+        description: 'Release Tag（当勾选“是否创建 Release”时必填）'
+        type: string
+        required: false
+
+# 为 Release Job 增加写入权限
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate branch-Java version matrix
+        id: set-matrix
+        run: |
+          # 获取匹配的分支名（去掉 origin/）
+          branches=$(git branch -r | grep -v HEAD | grep -v gh-pages | grep -E '1\.21\.|26\.' | sed 's/origin\///')
+          
+          # 构建 JSON 数组
+          matrix_json=$(echo "$branches" | jq -R -s 'split("\n")[:-1] | map(select(. != "")) | map({branch: ., java_version: (if contains("1.21.") then "21" else "25" end)}) | {include: .}')
+          
+          echo "matrix=$(echo "$matrix_json" | jq -c .)" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $(echo "$matrix_json" | jq -c .)"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout ${{ matrix.branch }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.branch }}
+          fetch-depth: 1
+
+      - name: Set up JDK ${{ matrix.java_version }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java_version }}
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew build --stacktrace
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.branch }}-build
+          path: build/libs/
+          if-no-files-found: warn
+
+  # 新增：创建 Release 并上传所有构建产物
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    # 仅当用户勾选“创建 Release”且提供了 Release Tag 时执行
+    if: github.event.inputs.isRelease == 'true' && github.event.inputs.releaseTag != ''
+    permissions:
+      contents: write      # 允许创建 Release 和上传附件
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-build'           # 匹配所有分支构建的 artifact
+          merge-multiple: true         # 合并到同一个目录
+          path: all-jars
+
+      - name: List downloaded files (debug)
+        run: ls -R all-jars
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.releaseTag }}
+          name: Release ${{ github.event.inputs.releaseTag }}
+          generate_release_notes: true   # 自动生成变更日志
+          files: all-jars/*.jar          # 上传所有 JAR 文件
+          fail_on_unmatched_files: true  # 如果没找到 JAR 文件则失败
+          # 如果 tag 已存在，可选择更新（谨慎使用）
+          # update_release: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
