@@ -150,12 +150,25 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.12
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v8
         with:
           pattern: '*-build'
           merge-multiple: true
           path: all-jars
+
+      - name: Make build summary
+        run: |
+          pip install jproperties
+          python .github/workflows/scripts/summary.py
+        env:
+          BUILD_BRANCHES: ${{ inputs.build_branches }}
 
       - name: List downloaded files (debug)
         run: ls -R all-jars
