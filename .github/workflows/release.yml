@@ -1,0 +1,172 @@
+name: Release (Matrix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      isRelease:
+        description: '是否创建 Release'
+        type: boolean
+        default: false
+      releaseTag:
+        description: 'Release Tag（当勾选“是否创建 Release”时必填）'
+        type: string
+        required: false
+      build_branches:
+        description: '指定要构建的分支（逗号分隔，例如 "1.21.4,26.0"）。留空则自动匹配 1.21.* 和 26.* 分支'
+        type: string
+        required: false
+        default: ''
+      ignore_branches:
+        description: '排除不构建的分支（逗号分隔，例如 "1.21.3"）。在白名单或自动匹配结果基础上排除'
+        type: string
+        required: false
+        default: ''
+
+# 基础权限（只读）
+permissions:
+  contents: read
+
+jobs:
+  matrix_prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate branch-Java version matrix
+        id: set-matrix
+        run: |
+          # 获取所有远程分支（去掉 origin/），排除 HEAD 和 gh-pages
+          all_branches=$(git branch -r | grep -v HEAD | grep -v gh-pages | sed 's/origin\///' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u)
+          
+          # 读取用户输入
+          build_list="${{ github.event.inputs.build_branches }}"
+          ignore_list="${{ github.event.inputs.ignore_branches }}"
+          
+          # 辅助函数：将逗号分隔字符串转为数组（已 trim）
+          to_array() {
+            echo "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'
+          }
+          
+          # 确定候选分支列表
+          if [ -n "$build_list" ]; then
+            echo "Using user-specified build branches: $build_list"
+            candidate_branches=$(to_array "$build_list" | while read b; do
+              if echo "$all_branches" | grep -Fxq "$b"; then
+                echo "$b"
+              else
+                echo "Warning: Branch '$b' not found in remote, ignored." >&2
+              fi
+            done | sort -u)
+          else
+            # 默认匹配：1.21（精确）或 1.21.* 或 26.*
+            echo "Using default pattern: branches matching 1.21, 1.21.*, or 26.*"
+            candidate_branches=$(echo "$all_branches" | grep -E '1\.21($|\.)|26\.' || true)
+          fi
+          
+          # 应用黑名单
+          if [ -n "$ignore_list" ]; then
+            echo "Ignoring branches: $ignore_list"
+            ignore_array=$(to_array "$ignore_list")
+            final_branches=""
+            for b in $candidate_branches; do
+              ignore=false
+              for ig in $ignore_array; do
+                if [ "$b" = "$ig" ]; then
+                  ignore=true
+                  break
+                fi
+              done
+              if [ "$ignore" = false ]; then
+                final_branches="${final_branches}${b}\n"
+              fi
+            done
+            final_branches=$(echo -e "$final_branches" | sed '/^$/d')
+          else
+            final_branches="$candidate_branches"
+          fi
+          
+          # 生成 matrix JSON
+          # Java 版本判断：分支名包含 "1.21"（无论是 "1.21" 还是 "1.21.xxx"）则用 JDK 21，否则用 JDK 25
+          matrix_json=$(echo "$final_branches" | jq -R -s '
+            split("\n") | map(select(. != "")) | 
+            map({
+              branch: .,
+              java_version: (if contains("1.21") then "21" else "25" end)
+            }) | {include: .}
+          ')
+          
+          echo "matrix=$(echo "$matrix_json" | jq -c .)" >> $GITHUB_OUTPUT
+          echo "Generated matrix: $(echo "$matrix_json" | jq -c .)"
+          
+          if [ "$(echo "$matrix_json" | jq '.include | length')" -eq 0 ]; then
+            echo "Warning: No branches selected for build." >&2
+          fi
+
+  build:
+    needs: matrix_prepare
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.matrix_prepare.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - name: Checkout ${{ matrix.branch }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.branch }}
+          fetch-depth: 1
+
+      - name: Set up JDK ${{ matrix.java_version }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: ${{ matrix.java_version }}
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        run: ./gradlew build --stacktrace
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.branch }}-build
+          path: build/libs/
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    # 仅当用户勾选“创建 Release”且提供了 Release Tag，并且 prepare 生成的矩阵非空时执行
+    if: |
+      github.event.inputs.isRelease == 'true' &&
+      github.event.inputs.releaseTag != '' &&
+      needs.prepare.outputs.matrix != '{"include":[]}'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: '*-build'
+          merge-multiple: true
+          path: all-jars
+
+      - name: List downloaded files (debug)
+        run: ls -R all-jars
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.releaseTag }}
+          name: ${{ github.event.inputs.releaseTag }}
+          generate_release_notes: true
+          files: all-jars/*.jar
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
