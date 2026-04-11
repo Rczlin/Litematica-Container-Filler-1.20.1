@@ -28,6 +28,6 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: litematica_container_filler_${{ env.COMMIT_HASH }}_build
+          name: litematica_container_filler_build.${{ env.COMMIT_HASH }}
           path: build/libs/
           if-no-files-found: warn
