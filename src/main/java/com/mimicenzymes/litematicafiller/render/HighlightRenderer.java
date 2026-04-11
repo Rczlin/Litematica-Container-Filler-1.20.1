@@ -39,7 +39,7 @@ public class HighlightRenderer {
 
             for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
                 Color4f c = getColor(entry.getValue());
-                RenderUtils.drawBlockBoundingBoxOutlinesBatchedLinesSimple(entry.getKey(), c, 0.015, lineWidth, buffer);
+                RenderUtils.drawBlockBoundingBoxOutlinesBatchedLinesSimple(entry.getKey(), c, 0.015, buffer);
             }
             BuiltBuffer meshData = buffer.endNullable();
             if (meshData != null) {
