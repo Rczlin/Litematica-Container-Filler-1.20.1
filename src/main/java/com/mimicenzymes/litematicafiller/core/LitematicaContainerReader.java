@@ -30,6 +30,10 @@ public class LitematicaContainerReader {
                 return new BlockPos[]{rightPos, leftPos};
             }
         } else if (state.isOf(net.minecraft.block.Blocks.BARREL)) {
+            if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_CARPET_LARGE_BARRELS.getBooleanValue()) {
+                return null;
+            }
+
             Direction facing = state.get(net.minecraft.block.BarrelBlock.FACING);
             Direction bottomDir = facing.getOpposite();
             BlockPos pos2 = pos.offset(bottomDir);
@@ -59,11 +63,17 @@ public class LitematicaContainerReader {
             Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, halves[1], registries);
 
             items.putAll(rightHalf);
-            leftHalf.forEach((slot, stack) -> items.put(slot + 27, stack));
-            return items;
+
+            for (Map.Entry<Integer, ItemStack> entry : leftHalf.entrySet()) {
+                items.put(entry.getKey() + 27, entry.getValue());
+            }
+        } else {
+            items.putAll(getSingleContainerItems(schematicWorld, worldPos, registries));
         }
 
-        return getSingleContainerItems(schematicWorld, worldPos, registries);
+        MaterialReplacer.replaceInMap(items);
+
+        return items;
     }
 
     private static Map<Integer, ItemStack> getSingleContainerItems(net.minecraft.world.World schematicWorld, BlockPos pos, RegistryWrapper.WrapperLookup registries) {
@@ -123,7 +133,7 @@ public class LitematicaContainerReader {
         return disabledSlots;
     }
 
-    public static Map<Integer, ItemStack> getRequiredItemsFromNbt(NbtCompound nbt, net.minecraft.registry.DynamicRegistryManager registryManager) {
+    public static Map<Integer, ItemStack> getRequiredItemsFromNbt(net.minecraft.nbt.NbtCompound nbt, net.minecraft.registry.DynamicRegistryManager registryManager) {
         if (!nbt.contains("Items")) return null;
 
         net.minecraft.nbt.NbtElement rawList = nbt.get("Items");
@@ -133,7 +143,7 @@ public class LitematicaContainerReader {
 
         for (int i = 0; i < itemsList.size(); i++) {
             net.minecraft.nbt.NbtElement element = itemsList.get(i);
-            if (!(element instanceof NbtCompound itemNbt)) continue;
+            if (!(element instanceof net.minecraft.nbt.NbtCompound itemNbt)) continue;
 
             int slot = 0;
             if (itemNbt.contains("Slot")) {
@@ -146,8 +156,8 @@ public class LitematicaContainerReader {
             final int finalSlot = slot;
 
             try {
-                com.mojang.serialization.DataResult<ItemStack> result =
-                        ItemStack.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, itemNbt);
+                com.mojang.serialization.DataResult<net.minecraft.item.ItemStack> result =
+                        net.minecraft.item.ItemStack.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, itemNbt);
 
                 result.result().ifPresent(stack -> {
                     if (!stack.isEmpty()) {
@@ -158,6 +168,9 @@ public class LitematicaContainerReader {
                 e.printStackTrace();
             }
         }
+
+        MaterialReplacer.replaceInMap(items);
+
         return items;
     }
 }

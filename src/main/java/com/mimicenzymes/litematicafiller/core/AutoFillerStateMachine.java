@@ -1298,9 +1298,6 @@ public class AutoFillerStateMachine {
 
         boolean printedAny = false;
         if (isCreativeFill && (!swappedAnyInThisPass && !extractedAnyInThisPass)) {
-            Map<StrictItemStackKey, Integer> globalDeficit = new HashMap<>();
-            Map<StrictItemStackKey, ItemStack> repStacks = new HashMap<>();
-
             for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
                 if (handler instanceof CrafterScreenHandler ch && ch.isSlotDisabled(containerSlot)) continue;
 
@@ -1315,41 +1312,37 @@ public class AutoFillerStateMachine {
 
                 ItemStack curStack = handler.slots.get(uiSlot).getStack();
                 int curCount = curStack.isEmpty() ? 0 : curStack.getCount();
+
                 int actualMissing = Math.min(reqStack.getCount() - curCount, allowed);
 
                 if (actualMissing > 0 && (curStack.isEmpty() || ItemMatcher.isSameItem(curStack, reqStack))) {
-                    StrictItemStackKey key = new StrictItemStackKey(reqStack);
-                    globalDeficit.put(key, globalDeficit.getOrDefault(key, 0) + actualMissing);
-                    repStacks.putIfAbsent(key, reqStack);
-                }
-            }
 
-            for (Map.Entry<StrictItemStackKey, Integer> entry : globalDeficit.entrySet()) {
-                ItemStack reqStack = repStacks.get(entry.getKey());
-                int totalNeeded = entry.getValue();
-                int inInv = countItemInPlayerInv(client, reqStack);
-
-                int deficit = totalNeeded - inInv;
-                while (deficit > 0) {
                     int emptySlot = findEmptyPlayerSlot(client);
-                    if (emptySlot == -1) break;
 
-                    ItemStack createStack = reqStack.copy();
-                    createStack.setCount(createStack.getMaxCount());
-                    int syncSlot = emptySlot < 9 ? emptySlot + 36 : emptySlot;
+                    if (emptySlot != -1) {
+                        ItemStack createStack = reqStack.copy();
+                        createStack.setCount(actualMissing);
 
-                    client.interactionManager.clickCreativeStack(createStack, syncSlot);
-                    client.player.getInventory().setStack(emptySlot, createStack);
+                        int syncSlot = emptySlot < 9 ? emptySlot + 36 : emptySlot;
+                        int uiPlayerSlot = currentMapper.getUiSlotForPlayer(emptySlot);
 
-                    printedAny = true;
-                    deficit -= createStack.getMaxCount();
+                        if (uiPlayerSlot >= 0 && uiPlayerSlot < handler.slots.size()) {
+                            client.interactionManager.clickCreativeStack(createStack, syncSlot);
 
-                    if (delay > 0) break;
+                            client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+
+                            client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.PICKUP, client.player);
+
+                            currentTask.fillLedger.put(containerSlot, allowed - actualMissing);
+                            printedAny = true;
+                            movedAny = true;
+
+                            if (delay > 0) break;
+                        }
+                    }
                 }
-                if (delay > 0 && printedAny) break;
             }
-
-            if (printedAny) {
+            if (printedAny && delay > 0) {
                 actionWaitTicks = Math.max(1, delay);
                 consecutiveFailures = 0;
                 watchdogTimer = 0;
