@@ -30,6 +30,10 @@ public class LitematicaContainerReader {
                 return new BlockPos[]{rightPos, leftPos};
             }
         } else if (state.isOf(net.minecraft.block.Blocks.BARREL)) {
+            if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_CARPET_LARGE_BARRELS.getBooleanValue()) {
+                return null;
+            }
+
             Direction facing = state.get(net.minecraft.block.BarrelBlock.FACING);
             Direction bottomDir = facing.getOpposite();
             BlockPos pos2 = pos.offset(bottomDir);
@@ -59,11 +63,17 @@ public class LitematicaContainerReader {
             Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, halves[1], registries);
 
             items.putAll(rightHalf);
-            leftHalf.forEach((slot, stack) -> items.put(slot + 27, stack));
-            return items;
+
+            for (Map.Entry<Integer, ItemStack> entry : leftHalf.entrySet()) {
+                items.put(entry.getKey() + 27, entry.getValue());
+            }
+        } else {
+            items.putAll(getSingleContainerItems(schematicWorld, worldPos, registries));
         }
 
-        return getSingleContainerItems(schematicWorld, worldPos, registries);
+        MaterialReplacer.replaceInMap(items);
+
+        return items;
     }
 
     private static Map<Integer, ItemStack> getSingleContainerItems(net.minecraft.world.World schematicWorld, BlockPos pos, RegistryWrapper.WrapperLookup registries) {
@@ -158,6 +168,9 @@ public class LitematicaContainerReader {
                 e.printStackTrace();
             }
         }
+
+        MaterialReplacer.replaceInMap(items);
+
         return items;
     }
 }
