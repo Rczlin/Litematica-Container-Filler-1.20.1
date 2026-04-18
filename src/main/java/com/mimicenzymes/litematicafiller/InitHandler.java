@@ -13,6 +13,5 @@ public class InitHandler implements IInitializationHandler {
         Configs configs = new Configs();
         Configs.init();
         ConfigManager.getInstance().registerConfigHandler(Reference.MOD_ID, configs);
-        InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
     }
 }

@@ -33,7 +33,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
                 boolean isTitleScreen = client.currentScreen != null && client.currentScreen.getClass().getSimpleName().equals("TitleScreen");
                 boolean isInWorld = client.player != null;
                 if (isTitleScreen || isInWorld) {
-                    try { new GuiConfigs(null); } catch (Exception e) {}
+                    try { new GuiConfigs(null); } catch (Exception _) {}
                     isGuiAutoRegistered = true;
                 }
             }
