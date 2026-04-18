@@ -1,15 +1,31 @@
 package com.mimicenzymes.litematicafiller.config;
 
 import com.google.common.collect.ImmutableList;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.mimicenzymes.litematicafiller.Reference;
 import com.mimicenzymes.litematicafiller.dependency.DependencyChecker;
+import com.mimicenzymes.litematicafiller.input.InputHandler;
+import fi.dy.masa.malilib.config.ConfigManager;
+import fi.dy.masa.malilib.config.ConfigUtils;
 import fi.dy.masa.malilib.config.IConfigBase;
+import fi.dy.masa.malilib.config.IConfigHandler;
 import fi.dy.masa.malilib.config.options.ConfigBoolean;
 import fi.dy.masa.malilib.config.options.ConfigColor;
 import fi.dy.masa.malilib.config.options.ConfigInteger;
 import fi.dy.masa.malilib.config.options.ConfigStringList;
+import fi.dy.masa.malilib.event.InputEventHandler;
+import fi.dy.masa.malilib.util.JsonUtils;
+import net.fabricmc.loader.api.FabricLoader;
+
+import java.io.File;
 import java.util.List;
 
-public class Configs {
+public class Configs implements IConfigHandler {
+
+    private static final Configs INSTANCE = new Configs();
+
+    private static final String CONFIG_FILE_NAME = "litematica_container_filler.json";
 
     //核心运行设置
     public static final ConfigBoolean ENABLE_MOD = new ConfigBoolean("litematica_container_filler.config.name.enableMod", true, "litematica_container_filler.config.comment.enableMod");
@@ -72,5 +88,42 @@ public class Configs {
                 HIGHLIGHT_COLOR_WRONG, HIGHLIGHT_COLOR_SATISFIED, HIGHLIGHT_COLOR_UNKNOWN);
 
         OPTIONS = builder.build();
+    }
+
+    @Override
+    public void load() {
+        File file = new File(FabricLoader.getInstance().getConfigDir().toFile(), CONFIG_FILE_NAME);
+        if (file.exists() && file.canRead()) {
+            JsonElement element = JsonUtils.parseJsonFile(file);
+            if (element != null && element.isJsonObject()) {
+                JsonObject root = element.getAsJsonObject();
+                ConfigUtils.readConfigBase(root, "Features", Configs.OPTIONS);
+                ConfigUtils.readConfigBase(root, "Hotkeys", Hotkeys.HOTKEY_LIST);
+            }
+        }
+    }
+
+    @Override
+    public void save() {
+        File dir = FabricLoader.getInstance().getConfigDir().toFile();
+        if ((dir.exists() && dir.isDirectory()) || dir.mkdirs()) {
+            JsonObject root = new JsonObject();
+            ConfigUtils.writeConfigBase(root, "Features", Configs.OPTIONS);
+            ConfigUtils.writeConfigBase(root, "Hotkeys", Hotkeys.HOTKEY_LIST);
+            JsonUtils.writeJsonToFile(root, new File(dir, CONFIG_FILE_NAME));
+        }
+
+        InputHandler.getInstance().addKeysToMap(InputEventHandler.getKeybindManager());
+    }
+    public static void init() {
+        Configs.INSTANCE.load();
+        ConfigManager.getInstance().registerConfigHandler(Reference.MOD_ID, Configs.INSTANCE);
+        InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
+        InputEventHandler.getInputManager().registerKeyboardInputHandler(InputHandler.getInstance());
+        //#if MC > 12006
+        fi.dy.masa.malilib.registry.Registry.CONFIG_SCREEN.registerConfigScreenFactory(
+                new fi.dy.masa.malilib.util.data.ModInfo(Reference.MOD_ID, Reference.MOD_NAME, GuiConfigs::new)
+        );
+        //#endif
     }
 }
