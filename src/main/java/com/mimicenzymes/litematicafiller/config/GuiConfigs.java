@@ -1,6 +1,5 @@
 package com.mimicenzymes.litematicafiller.config;
 
-import com.mimicenzymes.litematicafiller.LitematicaContainerFillerClient;
 import com.mimicenzymes.litematicafiller.Reference;
 import fi.dy.masa.malilib.gui.GuiConfigsBase;
 import fi.dy.masa.malilib.gui.button.ButtonBase;
@@ -32,7 +31,7 @@ public class GuiConfigs extends GuiConfigsBase {
         for (Tab t : Tab.values()) {
             String tabName = fi.dy.masa.malilib.util.StringUtils.translate("litematica_container_filler.gui.button." + t.name().toLowerCase());
             ButtonGeneric b = new ButtonGeneric(x, 26, -1, 20, tabName);
-            b.setEnabled(this.tab != t);
+            b.setEnabled(tab != t);
             this.addButton(b, (button, mouseButton) -> { this.tab = t; this.initGui(); });
             x += b.getWidth() + 2;
         }

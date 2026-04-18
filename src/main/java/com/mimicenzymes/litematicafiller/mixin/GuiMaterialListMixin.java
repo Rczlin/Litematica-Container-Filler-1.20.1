@@ -16,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import java.util.List;
 
 @Mixin(value = GuiMaterialList.class, remap = false)
-public abstract class MixinGuiMaterialList extends GuiBase {
+public abstract class GuiMaterialListMixin extends GuiBase {
 
     @Unique
     private long mimic_lastContentHash = -1;
