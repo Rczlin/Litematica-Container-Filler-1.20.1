@@ -31,7 +31,6 @@ public class GuiConfigs extends GuiConfigsBase {
         for (Tab tab : Tab.values()) {
             String tabName = fi.dy.masa.malilib.util.StringUtils.translate("litematica_container_filler.gui.button." + tab.name().toLowerCase());
             ButtonGeneric botton = new ButtonGeneric(x, y, -1, 20, tabName);
-            botton.setEnabled(false);
             this.addButton(botton, new ButtonListener(tab, this));
             x += botton.getWidth() + 2;
         }
