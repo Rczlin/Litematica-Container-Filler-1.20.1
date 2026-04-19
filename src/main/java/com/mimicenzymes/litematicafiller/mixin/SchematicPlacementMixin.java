@@ -12,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(value = fi.dy.masa.litematica.schematic.placement.SchematicPlacement.class, remap = false)
-public class MixinSchematicPlacement {
+public class SchematicPlacementMixin {
     @Inject(method = "setOrigin", at = @At("RETURN"))
     private void onOriginChanged(BlockPos origin, IStringConsumer feedback, CallbackInfoReturnable<Boolean> cir) {
         com.mimicenzymes.litematicafiller.render.HighlightScanner.onPlacementChanged();

@@ -8,7 +8,7 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LootableContainerBlockEntity.class)
-public class MixinLootableContainerBlockEntity {
+public class LootableContainerBlockEntityMixin {
 
     @Inject(method = "getStack", at = @At("RETURN"), cancellable = true)
     private void onGetStack(int slot, CallbackInfoReturnable<ItemStack> cir) {

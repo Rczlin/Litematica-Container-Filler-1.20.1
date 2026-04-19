@@ -8,11 +8,11 @@
     "ScreenInterceptorMixin",
     "ClientPlayNetworkHandlerMixin",
     "GuiMainMenuMixin",
-    "MixinGuiMaterialList",
-    "MixinBlockEntity",
-    "MixinLootableContainerBlockEntity",
-    "MixinCrafterBlockEntity",
-    "MixinSchematicPlacement"
+    "GuiMaterialListMixin",
+    "BlockEntityMixin",
+    "LootableContainerBlockEntityMixin",
+    "CrafterBlockEntityMixin",
+    "SchematicPlacementMixin"
   ],
   "injectors": {
     "defaultRequire": 1

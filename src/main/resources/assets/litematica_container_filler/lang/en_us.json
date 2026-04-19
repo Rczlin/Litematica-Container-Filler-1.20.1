@@ -27,12 +27,12 @@
   "litematica_container_filler.config.name.creativeFill": "Creative Mode Fill",
   "litematica_container_filler.config.name.hideFillerGui": "Hide UI",
 
-  "litematica_container_filler.config.name.highlightColorUnfilled": "Color: Unfilled (Blue)",
-  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Mismatch (Yellow)",
-  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Excess (Pink)",
-  "litematica_container_filler.config.name.highlightColorWrong": "Color: Wrong Item (Red)",
-  "litematica_container_filler.config.name.highlightColorSatisfied": "Color: Satisfied (Green)",
-  "litematica_container_filler.config.name.highlightColorUnknown": "Color: Unknown Data (Orange)",
+  "litematica_container_filler.config.name.highlightColorUnfilled": "Color: Unfilled (Default: Blue)",
+  "litematica_container_filler.config.name.highlightColorPartial": "Color: Partial/Mismatch (Default: Yellow)",
+  "litematica_container_filler.config.name.highlightColorOverfilled": "Color: Overfilled/Excess (Default: Pink)",
+  "litematica_container_filler.config.name.highlightColorWrong": "Color: Wrong Item (Default: Red)",
+  "litematica_container_filler.config.name.highlightColorSatisfied": "Color: Satisfied (Default: Green)",
+  "litematica_container_filler.config.name.highlightColorUnknown": "Color: Unknown Data (Default: Orange)",
 
   "litematica_container_filler.config.comment.enableMod": "Enable or disable the core features of the Container Filler.",
   "litematica_container_filler.config.comment.continuousFill": "When enabled, the mod will automatically scan for and fill missing containers.",

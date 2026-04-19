@@ -11,14 +11,14 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "com.mimicenzymes.litematicafiller.LitematicafillerClient"
+      "com.mimicenzymes.litematicafiller.LitematicaContainerFillerClient"
     ],
     "modmenu": [
       "com.mimicenzymes.litematicafiller.config.ModMenuIntegration"
     ]
   },
   "mixins": [
-    "Litematica_container_filler.mixins.json"
+    "litematica_container_filler.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.15.11",

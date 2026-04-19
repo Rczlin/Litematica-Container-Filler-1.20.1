@@ -1,16 +1,11 @@
 package com.mimicenzymes.litematicafiller;
 
-import com.mimicenzymes.litematicafiller.config.ConfigHandler;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.config.GuiConfigs;
 import com.mimicenzymes.litematicafiller.core.*;
-import com.mimicenzymes.litematicafiller.input.InputHandler;
 import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
 
-import fi.dy.masa.malilib.config.ConfigManager;
 import fi.dy.masa.malilib.event.InitializationHandler;
-import fi.dy.masa.malilib.event.InputEventHandler;
-import fi.dy.masa.malilib.interfaces.IInitializationHandler;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -23,9 +18,7 @@ import net.minecraft.util.math.BlockPos;
 import java.util.HashMap;
 import java.util.Map;
 
-public class LitematicafillerClient implements ClientModInitializer {
-    public static final String MOD_ID = "litematica_container_filler";
-
+public class LitematicaContainerFillerClient implements ClientModInitializer {
     private static boolean isGuiAutoRegistered = false;
     private static int printerTickTimer = 0;
     //防鬼畜
@@ -40,7 +33,7 @@ public class LitematicafillerClient implements ClientModInitializer {
                 boolean isTitleScreen = client.currentScreen != null && client.currentScreen.getClass().getSimpleName().equals("TitleScreen");
                 boolean isInWorld = client.player != null;
                 if (isTitleScreen || isInWorld) {
-                    try { new GuiConfigs(null); } catch (Exception e) {}
+                    try { new GuiConfigs(null); } catch (Exception _) {}
                     isGuiAutoRegistered = true;
                 }
             }
@@ -98,15 +91,5 @@ public class LitematicafillerClient implements ClientModInitializer {
             }
         });
         InitializationHandler.getInstance().registerInitializationHandler(new InitHandler());
-    }
-
-    private static class InitHandler implements IInitializationHandler {
-        @Override
-        public void registerModHandlers() {
-            ConfigHandler configHandler = new ConfigHandler();
-            configHandler.load();
-            ConfigManager.getInstance().registerConfigHandler(LitematicafillerClient.MOD_ID, configHandler);
-            InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
-        }
     }
 }
