@@ -178,6 +178,8 @@ public class HighlightScanner {
             Collection<?> all = (Collection<?>) manager.getClass().getMethod("getAllSchematicsPlacements").invoke(manager);
             if (all != null) {
                 Set<Object> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+                var schematicWorld = fi.dy.masa.litematica.world.SchematicWorldHandler.getSchematicWorld();
+
                 for (Object p : all) {
                     boolean enabled = true;
                     try { enabled = (boolean) p.getClass().getMethod("isEnabled").invoke(p); } catch (Exception e) {}
@@ -208,9 +210,22 @@ public class HighlightScanner {
 
                             BlockPos directPos = new BlockPos(nx, ny, nz);
                             BlockPos offsetPos = origin.add(nx, ny, nz);
-                            double distDirect = directPos.getSquaredDistance(origin);
-                            double distOffset = offsetPos.getSquaredDistance(origin);
-                            BlockPos worldPos = (distDirect < distOffset) ? directPos : offsetPos;
+
+                            BlockPos worldPos = null;
+
+                            if (schematicWorld != null) {
+                                if (schematicWorld.getBlockState(offsetPos).hasBlockEntity()) {
+                                    worldPos = offsetPos;
+                                } else if (schematicWorld.getBlockState(directPos).hasBlockEntity()) {
+                                    worldPos = directPos;
+                                }
+                            }
+
+                            if (worldPos == null) {
+                                double distDirect = directPos.getSquaredDistance(origin);
+                                double distOffset = offsetPos.getSquaredDistance(origin);
+                                worldPos = (distDirect < distOffset) ? directPos : offsetPos;
+                            }
 
                             newSet.add(worldPos);
                         }
@@ -222,7 +237,7 @@ public class HighlightScanner {
     }
 
     private static void extractNbts(Object obj, List<NbtCompound> results, Set<Object> visited, int depth) {
-        if (obj == null || depth > 25 || !visited.add(obj)) return;
+        if (obj == null || depth > 100 || !visited.add(obj)) return;
 
         if (obj instanceof NbtCompound c) {
             if (c.contains("x") && c.contains("y") && c.contains("z") && (c.contains("Items") || c.contains("id"))) {

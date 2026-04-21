@@ -21,7 +21,6 @@ import java.util.Map;
 public class LitematicaContainerFillerClient implements ClientModInitializer {
     private static boolean isGuiAutoRegistered = false;
     private static int printerTickTimer = 0;
-    //防鬼畜
     private static final Map<BlockPos, Long> CROSSHAIR_COOLDOWNS = new HashMap<>();
 
     @Override
@@ -33,7 +32,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
                 boolean isTitleScreen = client.currentScreen != null && client.currentScreen.getClass().getSimpleName().equals("TitleScreen");
                 boolean isInWorld = client.player != null;
                 if (isTitleScreen || isInWorld) {
-                    try { new GuiConfigs(null); } catch (Exception _) {}
+                    try { new GuiConfigs(null); } catch (Exception e) {}
                     isGuiAutoRegistered = true;
                 }
             }
