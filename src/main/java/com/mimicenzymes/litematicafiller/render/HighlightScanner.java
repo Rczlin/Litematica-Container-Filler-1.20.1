@@ -107,7 +107,14 @@ public class HighlightScanner {
 
             Map<Integer, ItemStack> required = getCachedSchematicReq(checkPos, client);
             boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
-            boolean hasJob = (required != null && !required.isEmpty()) || isCrafter;
+
+            // A container has a job if it has items to fill.
+            // For crafters, also check if there are disabled slots to lock.
+            boolean hasJob = (required != null && !required.isEmpty());
+            if (!hasJob && isCrafter) {
+                Set<Integer> schematicLocks = LitematicaContainerReader.getDisabledSlots(checkPos);
+                hasJob = !schematicLocks.isEmpty();
+            }
 
             if (!hasJob) continue;
 

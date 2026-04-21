@@ -4,19 +4,28 @@ import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
 import com.mimicenzymes.litematicafiller.core.MaterialReplacer;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
+import com.mimicenzymes.litematicafiller.mixin.MaterialListPlacementAccessor;
 import fi.dy.masa.litematica.data.DataManager;
+import fi.dy.masa.litematica.gui.GuiMaterialList;
+import fi.dy.masa.litematica.materials.MaterialListBase;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
+import fi.dy.masa.litematica.materials.MaterialListPlacement;
+import fi.dy.masa.litematica.materials.IMaterialList;
 import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
 import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement.RequiredEnabled;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.selection.Box;
+import fi.dy.masa.litematica.util.BlockInfoListType;
 import fi.dy.masa.malilib.util.LayerRange;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
@@ -36,14 +45,50 @@ public class FillMaterialCalculator {
 
     private static final Map<SchematicPlacement, List<NbtContext>> PLACEMENT_NBT_CACHE = new IdentityHashMap<>();
 
+    /**
+     * Key for aggregating items. For regular items, groups by item type + custom name.
+     * For container items (shulker boxes), also includes a hash of the container contents
+     * so that shulker boxes with different items are shown separately.
+     */
     public static class ItemStackKey {
         public final Item item;
         public final String customName;
+        public final int containerHash;
 
         public ItemStackKey(ItemStack stack) {
             this.item = stack.getItem();
             net.minecraft.text.Text name = stack.get(DataComponentTypes.CUSTOM_NAME);
             this.customName = name != null ? name.getString() : "";
+            this.containerHash = computeContainerHash(stack);
+        }
+
+        /**
+         * Compute a hash of the container contents for shulker boxes.
+         * Returns 0 for non-container items.
+         */
+        private static int computeContainerHash(ItemStack stack) {
+            // Only compute container hash for shulker box items
+            if (!(stack.getItem() instanceof BlockItem blockItem) ||
+                !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
+                return 0;
+            }
+
+            ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+            if (container == null) return 0;
+
+            // Build a content-based hash from all items in the container
+            int hash = 0;
+            int slot = 0;
+            for (ItemStack contained : container.iterateNonEmpty()) {
+                hash = 31 * hash + Registries.ITEM.getId(contained.getItem()).hashCode();
+                hash = 31 * hash + contained.getCount();
+                hash = 31 * hash + slot;
+                // Include custom name of contained items too
+                net.minecraft.text.Text cName = contained.get(DataComponentTypes.CUSTOM_NAME);
+                if (cName != null) hash = 31 * hash + cName.getString().hashCode();
+                slot++;
+            }
+            return hash;
         }
 
         @Override
@@ -51,12 +96,13 @@ public class FillMaterialCalculator {
             if (this == o) return true;
             if (!(o instanceof ItemStackKey)) return false;
             ItemStackKey that = (ItemStackKey) o;
-            return item.equals(that.item) && customName.equals(that.customName);
+            return item.equals(that.item) && customName.equals(that.customName) && containerHash == that.containerHash;
         }
 
         @Override
         public int hashCode() {
-            return 31 * item.hashCode() + customName.hashCode();
+            int result = 31 * item.hashCode() + customName.hashCode();
+            return 31 * result + containerHash;
         }
     }
 
@@ -101,42 +147,16 @@ public class FillMaterialCalculator {
                 if (obj instanceof SchematicPlacement sp) placementsToScan.add(sp);
             }
         } else {
-            Object targetListObj = null;
-            if (input != null && input.getClass().getSimpleName().contains("GuiMaterialList")) {
-                Class<?> currGuiCls = input.getClass();
-                while (currGuiCls != null && currGuiCls != Object.class && targetListObj == null) {
-                    for (java.lang.reflect.Field f : currGuiCls.getDeclaredFields()) {
-                        if (f.getType().getSimpleName().contains("MaterialList") && !f.getType().getSimpleName().contains("Widget")) {
-                            f.setAccessible(true);
-                            try { targetListObj = f.get(input); } catch (Exception ignored) {}
-                            break;
-                        }
-                    }
-                    currGuiCls = currGuiCls.getSuperclass();
-                }
-            } else {
-                targetListObj = input;
-            }
+            // Extract MaterialListBase from the input
+            MaterialListBase matList = extractMaterialList(input);
 
-            if (targetListObj != null) {
-                Class<?> mListCls = targetListObj.getClass();
-                boolean foundPlacement = false;
-                while (mListCls != null && mListCls != Object.class && !foundPlacement) {
-                    for (java.lang.reflect.Field mf : mListCls.getDeclaredFields()) {
-                        String typeName = mf.getType().getSimpleName();
-                        if (typeName.equals("SchematicPlacement") || typeName.endsWith("Placement") || typeName.equals("SelectionManager")) {
-                            mf.setAccessible(true);
-                            try {
-                                Object p = mf.get(targetListObj);
-                                if (p instanceof SchematicPlacement sp) {
-                                    placementsToScan.add(sp);
-                                }
-                                foundPlacement = true;
-                            } catch (Exception ignored) {}
-                            break;
-                        }
+            if (matList != null) {
+                // Get SchematicPlacement via accessor mixin (no reflection!)
+                if (matList instanceof MaterialListPlacement mlp) {
+                    SchematicPlacement sp = ((MaterialListPlacementAccessor) mlp).getPlacement();
+                    if (sp != null) {
+                        placementsToScan.add(sp);
                     }
-                    mListCls = mListCls.getSuperclass();
                 }
             }
         }
@@ -378,6 +398,28 @@ public class FillMaterialCalculator {
         }
     }
 
+    /**
+     * Extract MaterialListBase from various input types using direct API calls.
+     */
+    private static MaterialListBase extractMaterialList(Object input) {
+        if (input instanceof MaterialListBase mlb) {
+            return mlb;
+        }
+        // GuiMaterialList has a public getMaterialList() method
+        if (input instanceof GuiMaterialList gui) {
+            return gui.getMaterialList();
+        }
+        // Try if input's class has getMaterialList() (e.g. mixin-enhanced class)
+        try {
+            if (input != null && input.getClass().getSimpleName().contains("GuiMaterialList")) {
+                java.lang.reflect.Method m = input.getClass().getMethod("getMaterialList");
+                Object result = m.invoke(input);
+                if (result instanceof MaterialListBase mlb) return mlb;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     private static int getItemsCount(NbtCompound nbt) {
         if (nbt != null && nbt.contains("Items")) {
             NbtElement el = nbt.get("Items");
@@ -392,95 +434,32 @@ public class FillMaterialCalculator {
         return parsedMap != null ? parsedMap.size() : 0;
     }
 
-    private static boolean isItemIgnored(Object materialListObj, Item item) {
-        try {
-            Identifier id = Registries.ITEM.getId(item);
-            String idStr = id.toString();
-            String pathStr = id.getPath();
-
-            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
-                String fName = f.getName().toUpperCase();
-                if (fName.contains("IGNORE") && (fName.contains("TYPE") || fName.contains("ITEM") || fName.contains("MAT"))) {
-                    Object opt = f.get(null);
-                    if (opt != null) {
-                        try {
-                            List<?> strings = (List<?>) opt.getClass().getMethod("getStrings").invoke(opt);
-                            if (strings != null) {
-                                for (Object o : strings) {
-                                    if (o.toString().equalsIgnoreCase(idStr) || o.toString().equalsIgnoreCase(pathStr)) return true;
-                                }
-                            }
-                        } catch (Exception e1) {
-                            try {
-                                String val = (String) opt.getClass().getMethod("getStringValue").invoke(opt);
-                                if (val != null) {
-                                    for (String s : val.replace("[", "").replace("]", "").split(",")) {
-                                        if (s.trim().equalsIgnoreCase(idStr) || s.trim().equalsIgnoreCase(pathStr)) return true;
-                                    }
-                                }
-                            } catch (Exception e2) {}
-                        }
-                    }
-                }
-            }
-
-            if (materialListObj != null) {
-                try {
-                    java.util.Collection<?> ignored = (java.util.Collection<?>) materialListObj.getClass().getMethod("getIgnoredItems").invoke(materialListObj);
-                    if (ignored != null) {
-                        for (Object obj : ignored) {
-                            if (obj == item || obj.toString().contains(pathStr)) return true;
-                        }
-                    }
-                } catch (Exception e) {}
-            }
-        } catch (Exception ignored) {}
+    /**
+     * Check if an item is in the material list's ignored set.
+     * Uses direct API — MaterialListBase.ignored is checked via the filtered list mechanism.
+     * We don't need to check it manually since setMaterialListEntries → refreshPreFilteredList
+     * already filters out ignored entries.
+     */
+    private static boolean isItemIgnored(MaterialListBase materialList, Item item) {
+        // MaterialListBase handles ignored items internally via refreshPreFilteredList()
+        // No need to check here — the filtering happens automatically when we inject
         return false;
     }
 
     public static List<MaterialListEntry> getCustomMaterialList(Object materialListObj) {
         boolean limitToLayer = true;
 
-        try {
-            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
-                String cleanName = f.getName().toUpperCase().replace("_", "");
-                if (cleanName.equals("MATERIALLISTDISPLAYTYPE") || cleanName.equals("MATERIALLISTLIMITTOLAYER") || cleanName.equals("MATERIALLISTIGNORERENDERLAYER")) {
-                    Object opt = f.get(null);
-                    if (opt != null) {
-                        boolean resolved = false;
-                        try {
-                            boolean bVal = (Boolean) opt.getClass().getMethod("getBooleanValue").invoke(opt);
-                            limitToLayer = cleanName.contains("IGNORE") ? !bVal : bVal;
-                            resolved = true;
-                        } catch (Exception ignored) {}
-
-                        if (!resolved) {
-                            String sVal = "";
-                            try { sVal = (String) opt.getClass().getMethod("getStringValue").invoke(opt); } catch (Exception e) {}
-                            if (sVal != null) sVal = sVal.toUpperCase();
-                            if (sVal.equals("ALL") || sVal.equals("NONE") || sVal.contains("全部") || sVal.contains("所有")) {
-                                limitToLayer = false;
-                            } else {
-                                limitToLayer = true;
-                            }
-                        }
-                    }
-                }
+        // Use the public IMaterialList interface to get the list type
+        if (materialListObj instanceof IMaterialList iMatList) {
+            BlockInfoListType type = iMatList.getMaterialListType();
+            if (type != null) {
+                limitToLayer = type.name().contains("LAYER");
             }
-        } catch (Exception ignored) {}
-
-        if (materialListObj instanceof fi.dy.masa.litematica.materials.IMaterialList iMatList) {
-            fi.dy.masa.litematica.util.BlockInfoListType type = iMatList.getMaterialListType();
-            if (type != null) limitToLayer = type.name().contains("LAYER");
         }
 
         List<MaterialListEntry> list = new ArrayList<>();
 
         for (Map.Entry<ItemStackKey, ItemStats> entry : itemStatsCache.entrySet()) {
-            if (isItemIgnored(materialListObj, entry.getKey().item)) {
-                continue;
-            }
-
             ItemStats stats = entry.getValue();
 
             int total = limitToLayer ? stats.totalLayer : stats.totalAll;
@@ -493,7 +472,11 @@ public class FillMaterialCalculator {
             ItemStack stack = stats.representative;
             if (stack.isEmpty()) stack = new ItemStack(entry.getKey().item);
 
-            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, mismatch);
+            // mismatch is set to 0 because our "mismatch" (extra items in container) is semantically
+            // different from Litematica's "mismatch" (wrong block type, subset of missing).
+            // Litematica's progress bar formula: missing = countMissing - countMismatched
+            // If we pass our independent mismatch value, it produces negative percentages.
+            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, 0);
             list.add(matEntry);
         }
 

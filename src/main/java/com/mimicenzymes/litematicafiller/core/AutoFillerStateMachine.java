@@ -414,6 +414,7 @@ public class AutoFillerStateMachine {
     }
 
     private void abortTask(MinecraftClient client, String errorMsgKey, boolean isInventoryFull, boolean isLeaking) {
+        aborting = true; // Immediately allow screen opens (inventory, etc.)
         sendFeedback(client, Text.translatable(errorMsgKey).getString(), true);
         if (currentTask != null) {
             if (isLeaking) {
@@ -1588,6 +1589,7 @@ public class AutoFillerStateMachine {
     }
 
     private void reset() {
+        aborting = false;
         currentTask = null;
         currentMapper = null;
         mappedHandler = null;
@@ -1699,6 +1701,18 @@ public class AutoFillerStateMachine {
     public boolean isIdle() { return this.currentTask == null && this.actionQueue.isEmpty(); }
 
     public boolean isWorking() { return !isIdle(); }
+
+    /**
+     * Returns true only when the filler is actively performing automated operations
+     * (filling, extracting, inspecting, etc.) — NOT when it's aborting or resetting.
+     * Used by ScreenInterceptorMixin to decide whether to block screen opens.
+     * This prevents the "can't open inventory after timeout" bug.
+     */
+    public boolean shouldBlockScreens() {
+        return isWorking() && currentPhase != Phase.IDLE && !aborting;
+    }
+
+    private boolean aborting = false;
 
     private void simulateSlotClick(HandledScreen<?> screen, Slot slot, int slotId, int button, SlotActionType actionType) {
         try {

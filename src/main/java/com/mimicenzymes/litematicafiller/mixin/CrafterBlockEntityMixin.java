@@ -12,6 +12,7 @@ public class CrafterBlockEntityMixin {
 
     @Inject(method = "getStack", at = @At("RETURN"), cancellable = true)
     private void onGetStack(int slot, CallbackInfoReturnable<ItemStack> cir) {
+        if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) return;
         net.minecraft.world.World world = ((net.minecraft.block.entity.BlockEntity) (Object) this).getWorld();
         if (world != null && world.isClient() && world.getClass().getSimpleName().contains("Schematic")) {
             ItemStack replaced = com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceSingleStack(cir.getReturnValue());

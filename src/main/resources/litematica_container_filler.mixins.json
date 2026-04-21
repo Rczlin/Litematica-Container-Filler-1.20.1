@@ -12,7 +12,8 @@
     "BlockEntityMixin",
     "LootableContainerBlockEntityMixin",
     "CrafterBlockEntityMixin",
-    "SchematicPlacementMixin"
+    "SchematicPlacementMixin",
+    "MaterialListPlacementAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
