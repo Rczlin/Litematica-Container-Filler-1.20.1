@@ -16,3 +16,8 @@ bin/
 
 # 系统杂物
 .DS_Store
+/MixinGuiMaterialList_old.java
+/FillMaterialCalculator_old.java
+/litematica/
+/tmp_litematica/
+/.vscode/

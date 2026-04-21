@@ -61,8 +61,8 @@ public class FillMaterialCalculator {
     }
 
     private static class ItemStats {
-        int totalAll = 0, missingAll = 0, mismatchAll = 0;
-        int totalLayer = 0, missingLayer = 0, mismatchLayer = 0;
+        int totalAll = 0, missingAll = 0, availableAll = 0, mismatchAll = 0;
+        int totalLayer = 0, missingLayer = 0, availableLayer = 0, mismatchLayer = 0;
         ItemStack representative = ItemStack.EMPTY;
     }
 
@@ -99,6 +99,45 @@ public class FillMaterialCalculator {
         } else if (input instanceof Collection<?> coll) {
             for (Object obj : coll) {
                 if (obj instanceof SchematicPlacement sp) placementsToScan.add(sp);
+            }
+        } else {
+            Object targetListObj = null;
+            if (input != null && input.getClass().getSimpleName().contains("GuiMaterialList")) {
+                Class<?> currGuiCls = input.getClass();
+                while (currGuiCls != null && currGuiCls != Object.class && targetListObj == null) {
+                    for (java.lang.reflect.Field f : currGuiCls.getDeclaredFields()) {
+                        if (f.getType().getSimpleName().contains("MaterialList") && !f.getType().getSimpleName().contains("Widget")) {
+                            f.setAccessible(true);
+                            try { targetListObj = f.get(input); } catch (Exception ignored) {}
+                            break;
+                        }
+                    }
+                    currGuiCls = currGuiCls.getSuperclass();
+                }
+            } else {
+                targetListObj = input;
+            }
+
+            if (targetListObj != null) {
+                Class<?> mListCls = targetListObj.getClass();
+                boolean foundPlacement = false;
+                while (mListCls != null && mListCls != Object.class && !foundPlacement) {
+                    for (java.lang.reflect.Field mf : mListCls.getDeclaredFields()) {
+                        String typeName = mf.getType().getSimpleName();
+                        if (typeName.equals("SchematicPlacement") || typeName.endsWith("Placement") || typeName.equals("SelectionManager")) {
+                            mf.setAccessible(true);
+                            try {
+                                Object p = mf.get(targetListObj);
+                                if (p instanceof SchematicPlacement sp) {
+                                    placementsToScan.add(sp);
+                                }
+                                foundPlacement = true;
+                            } catch (Exception ignored) {}
+                            break;
+                        }
+                    }
+                    mListCls = mListCls.getSuperclass();
+                }
             }
         }
 
@@ -305,10 +344,12 @@ public class FillMaterialCalculator {
                 int matched = Math.min(req, real);
 
                 stats.totalAll += req;
+                stats.availableAll += real;
                 stats.missingAll += Math.max(0, req - matched);
 
                 if (inLayer) {
                     stats.totalLayer += req;
+                    stats.availableLayer += real;
                     stats.missingLayer += Math.max(0, req - matched);
                 }
             }
@@ -444,14 +485,15 @@ public class FillMaterialCalculator {
 
             int total = limitToLayer ? stats.totalLayer : stats.totalAll;
             int missing = limitToLayer ? stats.missingLayer : stats.missingAll;
+            int available = limitToLayer ? stats.availableLayer : stats.availableAll;
             int mismatch = limitToLayer ? stats.mismatchLayer : stats.mismatchAll;
 
-            if (total == 0 && missing == 0 && mismatch == 0) continue;
+            if (total == 0 && missing == 0 && available == 0 && mismatch == 0) continue;
 
             ItemStack stack = stats.representative;
             if (stack.isEmpty()) stack = new ItemStack(entry.getKey().item);
 
-            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, mismatch, 0);
+            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, mismatch);
             list.add(matEntry);
         }
 
@@ -479,8 +521,8 @@ public class FillMaterialCalculator {
                         c.getStack(),
                         v.getCountTotal() + c.getCountTotal(),
                         v.getCountMissing() + c.getCountMissing(),
-                        v.getCountMismatched() + c.getCountMismatched(),
-                        v.getCountAvailable()
+                        v.getCountAvailable(),
+                        v.getCountMismatched() + c.getCountMismatched()
                 );
                 mergedMap.put(key, combined);
             } else {

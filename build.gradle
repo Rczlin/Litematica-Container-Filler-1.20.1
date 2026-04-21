@@ -29,3 +29,9 @@ dependencies {
     modCompileOnly name: 'quickshulker-2.8.0-1.21.9'
     modLocalRuntime name: 'quickshulker-2.8.0-1.21.9'
 }
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}

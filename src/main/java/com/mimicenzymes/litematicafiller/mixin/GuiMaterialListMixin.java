@@ -16,8 +16,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.IdentityHashMap;
 
 @Mixin(value = GuiMaterialList.class, remap = false)
 public abstract class GuiMaterialListMixin extends GuiBase {
@@ -28,12 +26,11 @@ public abstract class GuiMaterialListMixin extends GuiBase {
     @Unique
     private boolean mimic_needsCalculation = true;
 
-    // 【核心重构】：支持多个列表实例同步缓存（同时处理 GUI 局部列表 + HUD 全局列表）
     @Unique
-    private final Map<Object, List<MaterialListEntry>> mimic_cachedVanillaLists = new IdentityHashMap<>();
+    private List<MaterialListEntry> mimic_cachedVanillaList = null;
 
     @Unique
-    private final Map<Object, List<MaterialListEntry>> mimic_lastInjectedLists = new IdentityHashMap<>();
+    private List<MaterialListEntry> mimic_lastInjectedList = null;
 
     @Inject(method = "initGui", at = @At("RETURN"))
     private void onInitGui(CallbackInfo ci) {
@@ -71,14 +68,13 @@ public abstract class GuiMaterialListMixin extends GuiBase {
             }
         } catch (Exception ignored) {}
 
-        ButtonGeneric toggleBtn = new ButtonGeneric(maxX + 4, targetY, 120, 20, text);
+        ButtonGeneric toggleBtn = new ButtonGeneric(maxX + 1, targetY, 120, 20, text);
 
         this.addButton(toggleBtn, (button, mouseButton) -> {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
 
             mimic_needsCalculation = true;
-            mimic_lastInjectedLists.clear();
             this.initGui();
         });
 
@@ -104,8 +100,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
                     } catch (Exception e) {}
                 }
                 mimic_isMonitorRunning = false;
-                mimic_cachedVanillaLists.clear();
-                mimic_lastInjectedLists.clear();
             });
             monitor.setDaemon(true);
             monitor.setName("LitematicaFiller-InjectionWatchdog");
@@ -115,62 +109,43 @@ public abstract class GuiMaterialListMixin extends GuiBase {
 
     @Unique
     @SuppressWarnings("unchecked")
-    private List<MaterialListEntry> mimic_extractBaseList(Object materialListObj) {
-        Class<?> curr = materialListObj.getClass();
-        while (curr != null) {
-            for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
-                if (f.getName().equals("materialListAll") || f.getName().equals("m_materials")) {
-                    f.setAccessible(true);
-                    try {
-                        Object listObj = f.get(materialListObj);
-                        if (listObj instanceof List) {
-                            return (List<MaterialListEntry>) listObj;
-                        }
-                    } catch (Exception ignored) {}
-                    return null;
-                }
-            }
-            curr = curr.getSuperclass();
-        }
-        return null;
-    }
-
-    @Unique
     private void mimic_injectUsingOfficialApi() {
         try {
-            List<Object> targetListObjs = new ArrayList<>();
-
-            // 1. 抓取 GUI 正在显示的局部列表对象
-            Object guiListObj = null;
+            Object materialListObj = null;
             for (java.lang.reflect.Field f : this.getClass().getDeclaredFields()) {
                 if (f.getType().getSimpleName().contains("MaterialList") && !f.getType().getSimpleName().contains("Widget")) {
                     f.setAccessible(true);
-                    guiListObj = f.get(this);
+                    materialListObj = f.get(this);
                     break;
                 }
             }
-            if (guiListObj instanceof IMaterialList) {
-                targetListObjs.add(guiListObj);
-            }
+            if (!(materialListObj instanceof IMaterialList)) return;
 
-            // 【神级修复】：2. 抓取 HUD 悬浮窗正在使用的全局数据源！一并进行注入！
-            Object globalListObj = fi.dy.masa.litematica.data.DataManager.getMaterialList();
-            if (globalListObj instanceof IMaterialList && !targetListObjs.contains(globalListObj)) {
-                targetListObjs.add(globalListObj);
-            }
+            IMaterialList iMatList = (IMaterialList) materialListObj;
+            List<MaterialListEntry> currentBaseList = null;
 
-            if (targetListObjs.isEmpty()) return;
-
-            // 为所有的列表（GUI 和 HUD 的）更新原版材料基底缓存
-            for (Object materialListObj : targetListObjs) {
-                List<MaterialListEntry> currentBaseList = mimic_extractBaseList(materialListObj);
-                if (currentBaseList == null) continue;
-
-                if (currentBaseList != mimic_lastInjectedLists.get(materialListObj)) {
-                    mimic_cachedVanillaLists.put(materialListObj, new ArrayList<>(currentBaseList));
-                    mimic_needsCalculation = true;
+            Class<?> curr = materialListObj.getClass();
+            while (curr != null && currentBaseList == null) {
+                for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
+                    if (f.getName().equals("materialListAll") || f.getName().equals("m_materials")) {
+                        f.setAccessible(true);
+                        Object listObj = f.get(materialListObj);
+                        if (listObj instanceof List) {
+                            currentBaseList = (List<MaterialListEntry>) listObj;
+                        }
+                        break;
+                    }
                 }
+                curr = curr.getSuperclass();
             }
+            if (currentBaseList == null) return;
+
+            if (currentBaseList != mimic_lastInjectedList) {
+                mimic_cachedVanillaList = new ArrayList<>(currentBaseList);
+                mimic_needsCalculation = true;
+            }
+
+            if (mimic_cachedVanillaList == null) return;
 
             if (mimic_needsCalculation) {
                 FillMaterialCalculator.calculate(this, true);
@@ -179,31 +154,31 @@ public abstract class GuiMaterialListMixin extends GuiBase {
                 return;
             }
 
-            int scroll = mimic_getScrollPosition();
+            List<MaterialListEntry> targetList;
 
-            // 为 GUI 和 HUD 分别同时注入带容器的混合材料
-            for (Object materialListObj : targetListObjs) {
-                IMaterialList iMatList = (IMaterialList) materialListObj;
-                List<MaterialListEntry> cachedVanilla = mimic_cachedVanillaLists.get(materialListObj);
-
-                if (cachedVanilla == null) continue;
-
-                List<MaterialListEntry> targetList;
-                if (FillMaterialCalculator.listMode == 1) {
-                    targetList = FillMaterialCalculator.getCustomMaterialList(materialListObj);
-                } else if (FillMaterialCalculator.listMode == 2) {
-                    targetList = FillMaterialCalculator.mergeLists(cachedVanilla, FillMaterialCalculator.getCustomMaterialList(materialListObj));
-                } else {
-                    targetList = new ArrayList<>(cachedVanilla);
-                }
-
-                // 将计算好的容器数据直接赋值给官方列表的基底
-                iMatList.setMaterialListEntries(targetList);
-
-                // 保存新的不可变列表基底防止套娃
-                List<MaterialListEntry> newBaseList = mimic_extractBaseList(materialListObj);
-                mimic_lastInjectedLists.put(materialListObj, newBaseList != null ? newBaseList : targetList);
+            if (FillMaterialCalculator.listMode == 1) {
+                targetList = FillMaterialCalculator.getCustomMaterialList(materialListObj);
+            } else if (FillMaterialCalculator.listMode == 2) {
+                targetList = FillMaterialCalculator.mergeLists(mimic_cachedVanillaList, FillMaterialCalculator.getCustomMaterialList(materialListObj));
+            } else {
+                targetList = new ArrayList<>(mimic_cachedVanillaList);
             }
+
+            int scroll = mimic_getScrollPosition();
+            iMatList.setMaterialListEntries(targetList);
+            List<MaterialListEntry> newBaseList = null;
+            Class<?> curr2 = materialListObj.getClass();
+            while (curr2 != null && newBaseList == null) {
+                for (java.lang.reflect.Field f : curr2.getDeclaredFields()) {
+                    if (f.getName().equals("materialListAll") || f.getName().equals("m_materials")) {
+                        f.setAccessible(true);
+                        newBaseList = (List<MaterialListEntry>) f.get(materialListObj);
+                        break;
+                    }
+                }
+                curr2 = curr2.getSuperclass();
+            }
+            mimic_lastInjectedList = newBaseList != null ? newBaseList : targetList;
 
             mimic_setScrollPosition(scroll);
 
