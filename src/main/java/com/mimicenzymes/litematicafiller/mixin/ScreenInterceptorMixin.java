@@ -15,8 +15,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class ScreenInterceptorMixin {
     @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
     private void interceptScreen(Screen screen, CallbackInfo ci) {
+        if (!Configs.ENABLE_MOD.getBooleanValue()) return;
         if (screen instanceof HandledScreen && Configs.HIDE_FILLER_GUI.getBooleanValue()) {
-            if (AutoFillerStateMachine.getInstance().isWorking()) {
+            if (AutoFillerStateMachine.getInstance().shouldBlockScreens()) {
                 ci.cancel();
             }
         }

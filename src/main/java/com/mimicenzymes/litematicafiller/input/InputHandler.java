@@ -4,8 +4,9 @@ import com.mimicenzymes.litematicafiller.config.Hotkeys;
 import fi.dy.masa.malilib.hotkeys.IHotkey;
 import fi.dy.masa.malilib.hotkeys.IKeybindManager;
 import fi.dy.masa.malilib.hotkeys.IKeybindProvider;
+import fi.dy.masa.malilib.hotkeys.IKeyboardInputHandler;
 
-public class InputHandler implements IKeybindProvider {
+public class InputHandler implements IKeybindProvider, IKeyboardInputHandler {
     private static final InputHandler INSTANCE = new InputHandler();
     public static InputHandler getInstance() { return INSTANCE; }
 

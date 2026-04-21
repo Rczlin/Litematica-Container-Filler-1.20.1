@@ -10,13 +10,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(BlockEntity.class)
-public class MixinBlockEntity {
+public class BlockEntityMixin {
 
     @Inject(method = {
             "createNbt",
             "createNbtWithIdentifyingData"
     }, at = @At("RETURN"))
     private void onSerializeNbtAny(RegistryWrapper.WrapperLookup registries, CallbackInfoReturnable<NbtCompound> cir) {
+        if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) return;
         net.minecraft.world.World world = ((BlockEntity) (Object) this).getWorld();
         if (world != null && world.isClient() && world.getClass().getSimpleName().contains("Schematic")) {
             NbtCompound nbt = cir.getReturnValue();

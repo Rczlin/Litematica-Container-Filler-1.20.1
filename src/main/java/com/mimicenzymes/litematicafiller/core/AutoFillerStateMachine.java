@@ -33,14 +33,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class AutoFillerStateMachine {
 
     public enum Phase {
-        IDLE,
-        AWAITING_DATA,
-        INSPECTING,
-        STASHING,
-        CREATIVE_PRINTING,
-        GATHERING,
-        FILLING,
-        RETURNING
+        IDLE, AWAITING_DATA, INSPECTING, STASHING, GATHERING, FILLING, RETURNING
     }
 
     public static class FillTask {
@@ -116,11 +109,13 @@ public class AutoFillerStateMachine {
     private final Set<Integer> openedShulkerSlots = new LinkedHashSet<>();
     private final Map<Integer, Set<Item>> shulkerMisses = new HashMap<>();
     private final Map<BlockPos, Set<Item>> failedContainers = new ConcurrentHashMap<>();
+    private final Set<Integer> blacklistedSlots = new HashSet<>();
 
     private boolean lastContinuousState = false;
     private int tickCounter = 0;
     private int consecutiveFailures = 0;
     private int movesThisTask = 0;
+    private int cursorStuckAttempts = 0;
 
     private final IShulkerExtractor shulkerExtractor;
 
@@ -419,6 +414,7 @@ public class AutoFillerStateMachine {
     }
 
     private void abortTask(MinecraftClient client, String errorMsgKey, boolean isInventoryFull, boolean isLeaking) {
+        aborting = true; // Immediately allow screen opens (inventory, etc.)
         sendFeedback(client, Text.translatable(errorMsgKey).getString(), true);
         if (currentTask != null) {
             if (isLeaking) {
@@ -447,7 +443,9 @@ public class AutoFillerStateMachine {
     private List<Integer> getEmptySlots(MinecraftClient client) {
         List<Integer> emptySlots = new ArrayList<>();
         for (int i = 0; i < 36; i++) {
-            if (client.player.getInventory().getStack(i).isEmpty()) emptySlots.add(i);
+            if (client.player.getInventory().getStack(i).isEmpty() && !blacklistedSlots.contains(i)) {
+                emptySlots.add(i);
+            }
         }
         return emptySlots;
     }
@@ -495,7 +493,7 @@ public class AutoFillerStateMachine {
     }
 
     public boolean isSilentlyExtracting() { return silentlyExtracting; }
-    public void clearBlacklist() { failedContainers.clear(); }
+    public void clearBlacklist() { failedContainers.clear(); blacklistedSlots.clear(); }
 
     public void tick(MinecraftClient client) {
         if (client.player == null || client.world == null) { reset(); return; }
@@ -529,7 +527,7 @@ public class AutoFillerStateMachine {
             }
         }
 
-        if (actionWaitTicks > 0) { actionWaitTicks--; watchdogTimer = 0; return; }
+        if (actionWaitTicks > 0) { actionWaitTicks--; return; }
 
         if (currentTask == null) {
             if (!taskQueue.isEmpty()) {
@@ -539,6 +537,7 @@ public class AutoFillerStateMachine {
                 shulkerMisses.clear();
                 consecutiveFailures = 0;
                 movesThisTask = 0;
+                cursorStuckAttempts = 0;
 
                 if (currentTask.forcedManual) {
                     changePhase(Phase.INSPECTING);
@@ -924,9 +923,16 @@ public class AutoFillerStateMachine {
             activeShulkerSlot = -1;
             stashShulkerSlot = -1;
             stashItemSlot = -1;
+
+            consecutiveFailures++;
+            if (consecutiveFailures > 5) {
+                abortTask(client, "litematica_container_filler.message.inventory_full_cannot_extract", true, false);
+            }
         });
         actionQueue.add(() -> actionWaitTicks = getDelay(1));
-        actionQueue.add(() -> checkAndStartGatheringOrFilling(client));
+        actionQueue.add(() -> {
+            if (currentTask != null) checkAndStartGatheringOrFilling(client);
+        });
     }
 
     private Set<Integer> findShulkersContaining(MinecraftClient client, List<ItemStack> needed) {
@@ -1036,21 +1042,37 @@ public class AutoFillerStateMachine {
                 if (amountToTake == amountAvailable) {
                     client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.QUICK_MOVE, client.player);
                 } else {
-                    int emptySlot = -1;
-                    for (int j = h.slots.size() - 36; j < h.slots.size(); j++) {
-                        if (h.slots.get(j).getStack().isEmpty() && !usedEmptySlots.contains(j)) {
-                            emptySlot = j; break;
+                    boolean success = false;
+                    while (!success) {
+                        int emptyUiSlot = -1;
+                        int emptyPlayerSlot = -1;
+                        for (int j = h.slots.size() - 36; j < h.slots.size(); j++) {
+                            int pIdx = j - (h.slots.size() - 36);
+                            if (h.slots.get(j).getStack().isEmpty() && !usedEmptySlots.contains(j) && !blacklistedSlots.contains(pIdx)) {
+                                emptyUiSlot = j;
+                                emptyPlayerSlot = pIdx;
+                                break;
+                            }
                         }
-                    }
-                    if (emptySlot != -1) {
-                        usedEmptySlots.add(emptySlot);
-                        client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.PICKUP, client.player);
-                        for (int k = 0; k < amountToTake; k++) {
-                            client.interactionManager.clickSlot(h.syncId, emptySlot, 1, SlotActionType.PICKUP, client.player);
+
+                        if (emptyUiSlot != -1) {
+                            usedEmptySlots.add(emptyUiSlot);
+
+                            client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.PICKUP, client.player);
+                            for (int k = 0; k < amountToTake; k++) {
+                                client.interactionManager.clickSlot(h.syncId, emptyUiSlot, 1, SlotActionType.PICKUP, client.player);
+                            }
+                            client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.PICKUP, client.player);
+
+                            if (h.slots.get(emptyUiSlot).getStack().isEmpty()) {
+                                blacklistedSlots.add(emptyPlayerSlot);
+                            } else {
+                                success = true;
+                            }
+                        } else {
+                            client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.QUICK_MOVE, client.player);
+                            success = true;
                         }
-                        client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.PICKUP, client.player);
-                    } else {
-                        client.interactionManager.clickSlot(h.syncId, i, 0, SlotActionType.QUICK_MOVE, client.player);
                     }
                 }
 
@@ -1123,15 +1145,27 @@ public class AutoFillerStateMachine {
         boolean isCreativeFill = client.player != null && client.player.isCreative() && Configs.ENABLE_CREATIVE_FILL.getBooleanValue();
 
         if (!handler.getCursorStack().isEmpty()) {
-            if (!tryPlaceCursorItem(client, handler)) {
+            boolean placed = tryPlaceCursorItem(client, handler);
+            if (!placed) {
                 if (dropExtracted) {
                     client.interactionManager.clickSlot(syncId, -999, 0, SlotActionType.PICKUP, client.player);
                 } else {
+                    cursorStuckAttempts++;
+                    if (cursorStuckAttempts > 5) {
+                        abortTask(client, "litematica_container_filler.message.cursor_stuck", true, false);
+                        return;
+                    }
+                }
+            } else {
+                cursorStuckAttempts++;
+                if (cursorStuckAttempts > 5) {
                     abortTask(client, "litematica_container_filler.message.cursor_stuck", true, false);
                     return;
                 }
             }
             if (delay > 0) { actionWaitTicks = delay; return; }
+        } else {
+            cursorStuckAttempts = 0;
         }
 
         int containerSize = handler.slots.size() - 36;
@@ -1555,6 +1589,7 @@ public class AutoFillerStateMachine {
     }
 
     private void reset() {
+        aborting = false;
         currentTask = null;
         currentMapper = null;
         mappedHandler = null;
@@ -1567,6 +1602,7 @@ public class AutoFillerStateMachine {
         watchdogTimer = 0;
         movesThisTask = 0;
         consecutiveFailures = 0;
+        cursorStuckAttempts = 0;
         uiWaitTimer = 0;
         dataWaitTimer = 0;
         activeShulkerSlot = -1;
@@ -1576,6 +1612,7 @@ public class AutoFillerStateMachine {
         stashedItemCounts.clear();
         openedShulkerSlots.clear();
         shulkerMisses.clear();
+        blacklistedSlots.clear();
     }
 
     private void sendFeedback(MinecraftClient client, String text, boolean isActionBar) {
@@ -1617,15 +1654,22 @@ public class AutoFillerStateMachine {
         if (empty != -1) {
             int uiPlayerSlot = currentMapper.getUiSlotForPlayer(empty);
             if (uiPlayerSlot < 0 || uiPlayerSlot >= handler.slots.size()) return false;
+
+            int before = handler.getCursorStack().getCount();
             client.interactionManager.clickSlot(handler.syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+
+            if (handler.getCursorStack().getCount() == before) {
+                blacklistedSlots.add(empty);
+                return false;
+            }
             return true;
         }
         return false;
     }
 
     private int findEmptyPlayerSlot(MinecraftClient client) {
-        for (int i = 9; i < 36; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
-        for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty()) return i;
+        for (int i = 9; i < 36; i++) if (client.player.getInventory().getStack(i).isEmpty() && !blacklistedSlots.contains(i)) return i;
+        for (int i = 0; i < 9; i++) if (client.player.getInventory().getStack(i).isEmpty() && !blacklistedSlots.contains(i)) return i;
         return -1;
     }
 
@@ -1657,6 +1701,18 @@ public class AutoFillerStateMachine {
     public boolean isIdle() { return this.currentTask == null && this.actionQueue.isEmpty(); }
 
     public boolean isWorking() { return !isIdle(); }
+
+    /**
+     * Returns true only when the filler is actively performing automated operations
+     * (filling, extracting, inspecting, etc.) �?NOT when it's aborting or resetting.
+     * Used by ScreenInterceptorMixin to decide whether to block screen opens.
+     * This prevents the "can't open inventory after timeout" bug.
+     */
+    public boolean shouldBlockScreens() {
+        return isWorking() && currentPhase != Phase.IDLE && !aborting;
+    }
+
+    private boolean aborting = false;
 
     private void simulateSlotClick(HandledScreen<?> screen, Slot slot, int slotId, int button, SlotActionType actionType) {
         try {

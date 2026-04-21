@@ -4,40 +4,91 @@ import com.mimicenzymes.litematicafiller.core.ItemMatcher;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
 import com.mimicenzymes.litematicafiller.core.MaterialReplacer;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
+import com.mimicenzymes.litematicafiller.mixin.MaterialListPlacementAccessor;
+import fi.dy.masa.litematica.data.DataManager;
+import fi.dy.masa.litematica.gui.GuiMaterialList;
+import fi.dy.masa.litematica.materials.MaterialListBase;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
+import fi.dy.masa.litematica.materials.MaterialListPlacement;
+import fi.dy.masa.litematica.materials.IMaterialList;
+import fi.dy.masa.litematica.schematic.LitematicaSchematic;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
+import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement.RequiredEnabled;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
+import fi.dy.masa.litematica.selection.Box;
+import fi.dy.masa.litematica.util.BlockInfoListType;
+import fi.dy.masa.malilib.util.LayerRange;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ShulkerBoxBlock;
+import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
+import net.minecraft.util.Identifier;
+import net.minecraft.registry.Registries;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 public class FillMaterialCalculator {
     public static boolean isFillMode = false;
     public static int listMode = 0;
 
+    public static volatile boolean hasMissingData = false;
+
+    private static final Map<SchematicPlacement, List<NbtContext>> PLACEMENT_NBT_CACHE = new IdentityHashMap<>();
+
+    /**
+     * Key for aggregating items. For regular items, groups by item type + custom name.
+     * For container items (shulker boxes), also includes a hash of the container contents
+     * so that shulker boxes with different items are shown separately.
+     */
     public static class ItemStackKey {
         public final Item item;
         public final String customName;
+        public final int containerHash;
 
         public ItemStackKey(ItemStack stack) {
             this.item = stack.getItem();
             net.minecraft.text.Text name = stack.get(DataComponentTypes.CUSTOM_NAME);
             this.customName = name != null ? name.getString() : "";
+            this.containerHash = computeContainerHash(stack);
+        }
+
+        /**
+         * Compute a hash of the container contents for shulker boxes.
+         * Returns 0 for non-container items.
+         */
+        private static int computeContainerHash(ItemStack stack) {
+            // Only compute container hash for shulker box items
+            if (!(stack.getItem() instanceof BlockItem blockItem) ||
+                !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
+                return 0;
+            }
+
+            ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
+            if (container == null) return 0;
+
+            // Build a content-based hash from all items in the container
+            int hash = 0;
+            int slot = 0;
+            for (ItemStack contained : container.iterateNonEmpty()) {
+                hash = 31 * hash + Registries.ITEM.getId(contained.getItem()).hashCode();
+                hash = 31 * hash + contained.getCount();
+                hash = 31 * hash + slot;
+                // Include custom name of contained items too
+                net.minecraft.text.Text cName = contained.get(DataComponentTypes.CUSTOM_NAME);
+                if (cName != null) hash = 31 * hash + cName.getString().hashCode();
+                slot++;
+            }
+            return hash;
         }
 
         @Override
@@ -45,12 +96,13 @@ public class FillMaterialCalculator {
             if (this == o) return true;
             if (!(o instanceof ItemStackKey)) return false;
             ItemStackKey that = (ItemStackKey) o;
-            return item.equals(that.item) && customName.equals(that.customName);
+            return item.equals(that.item) && customName.equals(that.customName) && containerHash == that.containerHash;
         }
 
         @Override
         public int hashCode() {
-            return 31 * item.hashCode() + customName.hashCode();
+            int result = 31 * item.hashCode() + customName.hashCode();
+            return 31 * result + containerHash;
         }
     }
 
@@ -61,148 +113,137 @@ public class FillMaterialCalculator {
     }
 
     private static class NbtContext {
-        final NbtCompound nbt;
-        final Object placement;
-        NbtContext(NbtCompound nbt, Object placement) {
-            this.nbt = nbt;
+        final BlockPos worldPos;
+        final SchematicPlacement placement;
+        final Map<Integer, ItemStack> parsedRequired;
+
+        NbtContext(BlockPos worldPos, SchematicPlacement placement, Map<Integer, ItemStack> parsedRequired) {
+            this.worldPos = worldPos;
             this.placement = placement;
+            this.parsedRequired = parsedRequired;
         }
     }
 
     private static final Map<ItemStackKey, ItemStats> itemStatsCache = new HashMap<>();
 
-    private interface LayerFilter {
-        boolean test(int absoluteY, int relativeY);
-    }
-
-    private static class MathConfig {
-        String mode = "ALL";
-        int singleY = 0, minY = Integer.MIN_VALUE, maxY = Integer.MAX_VALUE;
-        boolean found = false;
-    }
-
     public static void calculate(Object input, boolean silent) {
         itemStatsCache.clear();
+
+        if (!silent) {
+            PLACEMENT_NBT_CACHE.clear();
+        }
+
         int foundContainersAll = 0, foundContainersLayer = 0;
-        int foundItemsAll = 0, foundItemsLayer = 0;
+        boolean waitingForData = false;
+
         MinecraftClient client = MinecraftClient.getInstance();
 
-        List<Object> placementsToScan = new ArrayList<>();
+        List<SchematicPlacement> placementsToScan = new ArrayList<>();
 
-        if (input instanceof Collection<?> coll) {
-            placementsToScan.addAll(coll);
-        } else if (input != null && input.getClass().getSimpleName().endsWith("Placement")) {
-            placementsToScan.add(input);
-        } else {
-            Object gui = null;
-            if (client.currentScreen != null && client.currentScreen.getClass().getSimpleName().contains("MaterialList")) {
-                gui = client.currentScreen;
+        if (input instanceof SchematicPlacement sp) {
+            placementsToScan.add(sp);
+        } else if (input instanceof Collection<?> coll) {
+            for (Object obj : coll) {
+                if (obj instanceof SchematicPlacement sp) placementsToScan.add(sp);
             }
-            if (gui != null) {
-                Class<?> currGuiCls = gui.getClass();
-                boolean foundList = false;
-                while (currGuiCls != null && currGuiCls != Object.class && !foundList) {
-                    for (java.lang.reflect.Field f : currGuiCls.getDeclaredFields()) {
-                        if (f.getType().getSimpleName().contains("MaterialList") && !f.getType().getSimpleName().contains("Widget")) {
-                            f.setAccessible(true);
-                            try {
-                                Object mList = f.get(gui);
-                                if (mList != null) {
-                                    Class<?> mListCls = mList.getClass();
-                                    while (mListCls != null && mListCls != Object.class) {
-                                        for (java.lang.reflect.Field mf : mListCls.getDeclaredFields()) {
-                                            String typeName = mf.getType().getSimpleName();
-                                            if (typeName.equals("SchematicPlacement") || typeName.endsWith("Placement") || typeName.equals("SelectionManager")) {
-                                                mf.setAccessible(true);
-                                                Object p = mf.get(mList);
-                                                if (p != null) placementsToScan.add(p);
-                                                foundList = true;
-                                                break;
-                                            }
-                                        }
-                                        if (foundList) break;
-                                        mListCls = mListCls.getSuperclass();
-                                    }
-                                }
-                            } catch (Exception ignored) {}
-                            if (foundList) break;
-                        }
+        } else {
+            // Extract MaterialListBase from the input
+            MaterialListBase matList = extractMaterialList(input);
+
+            if (matList != null) {
+                // Get SchematicPlacement via accessor mixin (no reflection!)
+                if (matList instanceof MaterialListPlacement mlp) {
+                    SchematicPlacement sp = ((MaterialListPlacementAccessor) mlp).getPlacement();
+                    if (sp != null) {
+                        placementsToScan.add(sp);
                     }
-                    currGuiCls = currGuiCls.getSuperclass();
                 }
             }
         }
 
         if (placementsToScan.isEmpty()) {
-            try {
-                Object manager = fi.dy.masa.litematica.data.DataManager.getSchematicPlacementManager();
-                Collection<?> all = (Collection<?>) manager.getClass().getMethod("getAllSchematicsPlacements").invoke(manager);
-                if (all != null) {
-                    for (Object p : all) {
-                        boolean enabled = true;
-                        try { enabled = (boolean) p.getClass().getMethod("isEnabled").invoke(p); } catch (Exception e) {}
-                        if (enabled) placementsToScan.add(p);
-                    }
+            SchematicPlacementManager manager = DataManager.getSchematicPlacementManager();
+            if (manager != null) {
+                for (SchematicPlacement p : manager.getAllSchematicsPlacements()) {
+                    if (p.isEnabled()) placementsToScan.add(p);
                 }
-            } catch (Exception ignored) {}
+            }
         }
 
         if (placementsToScan.isEmpty()) return;
 
-        boolean isLayerAbsolute = false;
-        try {
-            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
-                String cleanName = f.getName().toUpperCase().replace("_", "");
-                if (cleanName.equals("RENDERLAYERASABSOLUTECOORDS") || cleanName.equals("RENDERLAYERASABSOLUTE")) {
-                    Object opt = f.get(null);
-                    if (opt != null) isLayerAbsolute = (Boolean) opt.getClass().getMethod("getBooleanValue").invoke(opt);
-                    break;
-                }
-            }
-        } catch (Exception ignored) {}
-
-        LayerFilter globalFilter = buildGlobalFilter(isLayerAbsolute);
-        Map<Object, LayerFilter> placementFilters = new HashMap<>();
-        Map<Object, Integer> placementOriginYMap = new HashMap<>();
-
-        for (Object placement : placementsToScan) {
-            LayerFilter pFilter = buildPlacementFilter(placement, isLayerAbsolute);
-            if (pFilter != null) {
-                placementFilters.put(placement, pFilter);
-            }
-
-            BlockPos pOrigin = extractOrigin(placement);
-            placementOriginYMap.put(placement, pOrigin != null ? pOrigin.getY() : 0);
-        }
-
         Map<BlockPos, NbtContext> nbtMap = new HashMap<>();
-        Set<Object> visitedObj = Collections.newSetFromMap(new IdentityHashMap<>());
+        var schematicWorld = SchematicWorldHandler.getSchematicWorld();
 
-        for (Object placement : placementsToScan) {
-            List<NbtCompound> nbts = new ArrayList<>();
-            extractNbtsFromMemory(placement, nbts, visitedObj, 0);
+        for (SchematicPlacement placement : placementsToScan) {
+            List<NbtContext> cachedCtx = PLACEMENT_NBT_CACHE.get(placement);
 
-            BlockPos origin = extractOrigin(placement);
-            if (origin == null) origin = BlockPos.ORIGIN;
+            if (cachedCtx == null) {
+                LitematicaSchematic schematic = placement.getSchematic();
+                if (schematic == null) continue;
 
-            for (NbtCompound nbt : nbts) {
-                if (nbt.contains("x") && nbt.contains("y") && nbt.contains("z")) {
-                    int nx = getIntFromNbt(nbt.get("x"));
-                    int ny = getIntFromNbt(nbt.get("y"));
-                    int nz = getIntFromNbt(nbt.get("z"));
-
-                    BlockPos directPos = new BlockPos(nx, ny, nz);
-                    BlockPos offsetPos = origin.add(nx, ny, nz);
-                    double distDirect = directPos.getSquaredDistance(origin);
-                    double distOffset = offsetPos.getSquaredDistance(origin);
-                    BlockPos worldPos = (distDirect < distOffset) ? directPos : offsetPos;
-
-                    nbtMap.put(worldPos, new NbtContext(nbt, placement));
+                int totalTEs = 0;
+                for (String regionName : schematic.getAreaPositions().keySet()) {
+                    Map<BlockPos, NbtCompound> teMap = schematic.getBlockEntityMapForRegion(regionName);
+                    if (teMap != null) totalTEs += teMap.size();
                 }
+
+                if (totalTEs == 0) {
+                    PLACEMENT_NBT_CACHE.put(placement, Collections.emptyList());
+                    continue;
+                }
+
+                Map<BlockPos, NbtContext> bestMap = new HashMap<>();
+
+                if (schematicWorld != null) {
+                    for (Box box : placement.getSubRegionBoxes(RequiredEnabled.PLACEMENT_ENABLED).values()) {
+                        BlockPos p1 = box.getPos1();
+                        BlockPos p2 = box.getPos2();
+                        int minX = Math.min(p1.getX(), p2.getX());
+                        int maxX = Math.max(p1.getX(), p2.getX());
+                        int minY = Math.min(p1.getY(), p2.getY());
+                        int maxY = Math.max(p1.getY(), p2.getY());
+                        int minZ = Math.min(p1.getZ(), p2.getZ());
+                        int maxZ = Math.max(p1.getZ(), p2.getZ());
+
+                        for (int x = minX; x <= maxX; x++) {
+                            for (int y = minY; y <= maxY; y++) {
+                                for (int z = minZ; z <= maxZ; z++) {
+                                    BlockPos worldPos = new BlockPos(x, y, z);
+                                    BlockState state = schematicWorld.getBlockState(worldPos);
+
+                                    if (state != null && state.hasBlockEntity()) {
+                                        BlockEntity be = schematicWorld.getBlockEntity(worldPos);
+                                        if (be != null) {
+                                            NbtCompound nbt = be.createNbt(client.world.getRegistryManager());
+                                            if (nbt != null && nbt.contains("Items")) {
+                                                Map<Integer, ItemStack> parsedReq = RealContainerCache.parseNbtInventory(nbt, client.world.getRegistryManager());
+                                                MaterialReplacer.replaceInMap(parsedReq);
+
+                                                NbtContext existing = bestMap.get(worldPos);
+                                                if (existing == null || getItemsCount(nbt) > getItemsCount(existing.parsedRequired)) {
+                                                    bestMap.put(worldPos, new NbtContext(worldPos, placement, parsedReq));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                cachedCtx = new ArrayList<>(bestMap.values());
+                PLACEMENT_NBT_CACHE.put(placement, cachedCtx);
+            }
+
+            for (NbtContext ctx : cachedCtx) {
+                nbtMap.put(ctx.worldPos, ctx);
             }
         }
 
-        Set<BlockPos> globalVisited = new HashSet<>();
+        Set<BlockPos> globalVisited = new java.util.HashSet<>();
+
+        LayerRange layerRange = DataManager.getRenderLayerRange();
 
         for (Map.Entry<BlockPos, NbtContext> entry : nbtMap.entrySet()) {
             BlockPos pos = entry.getKey();
@@ -210,26 +251,27 @@ public class FillMaterialCalculator {
 
             if (globalVisited.contains(pos)) continue;
 
-            int nbtY = getIntFromNbt(ctx.nbt.get("y"));
-            int originY = placementOriginYMap.getOrDefault(ctx.placement, 0);
-            int absoluteY = originY + nbtY;
-
             boolean inLayer = true;
-            LayerFilter pFilter = placementFilters.get(ctx.placement);
-            if (pFilter != null) {
-                inLayer = pFilter.test(absoluteY, nbtY);
-            } else if (globalFilter != null) {
-                inLayer = globalFilter.test(absoluteY, nbtY);
+            if (layerRange != null) {
+                inLayer = layerRange.isPositionWithinRange(pos);
             }
 
-            Map<Integer, ItemStack> required = RealContainerCache.parseNbtInventory(ctx.nbt, client.world.getRegistryManager());
-            MaterialReplacer.replaceInMap(required);
+            Map<Integer, ItemStack> required = new HashMap<>();
+            for (Map.Entry<Integer, ItemStack> e : ctx.parsedRequired.entrySet()) {
+                required.put(e.getKey(), e.getValue().copy());
+            }
 
             BlockPos mainPos = pos;
             BlockState realState = client.world.getBlockState(pos);
+            BlockState schState = schematicWorld != null ? schematicWorld.getBlockState(pos) : null;
 
-            if (realState.hasBlockEntity()) {
-                BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, pos, realState);
+            boolean useSch = !realState.hasBlockEntity() && schState != null && schState.hasBlockEntity();
+            BlockState stateForHalves = useSch ? schState : realState;
+            net.minecraft.world.World worldForHalves = useSch ? (net.minecraft.world.World) (Object) schematicWorld : client.world;
+
+            BlockPos[] halves = null;
+            if (stateForHalves.hasBlockEntity()) {
+                halves = LitematicaContainerReader.getDoubleContainerHalves(worldForHalves, pos, stateForHalves);
                 if (halves != null) {
                     mainPos = halves[0];
                     globalVisited.add(halves[0]);
@@ -239,12 +281,11 @@ public class FillMaterialCalculator {
                     BlockPos otherPos = isPrimary ? halves[1] : halves[0];
 
                     if (nbtMap.containsKey(otherPos)) {
-                        Map<Integer, ItemStack> otherReq = RealContainerCache.parseNbtInventory(nbtMap.get(otherPos).nbt, client.world.getRegistryManager());
-                        MaterialReplacer.replaceInMap(otherReq);
+                        Map<Integer, ItemStack> otherReq = nbtMap.get(otherPos).parsedRequired;
 
                         if (isPrimary) {
                             for (Map.Entry<Integer, ItemStack> e : otherReq.entrySet()) {
-                                required.put(e.getKey() + 27, e.getValue());
+                                required.put(e.getKey() + 27, e.getValue().copy());
                             }
                         } else {
                             Map<Integer, ItemStack> shifted = new HashMap<>();
@@ -252,7 +293,7 @@ public class FillMaterialCalculator {
                                 shifted.put(e.getKey() + 27, e.getValue());
                             }
                             for (Map.Entry<Integer, ItemStack> e : otherReq.entrySet()) {
-                                shifted.put(e.getKey(), e.getValue());
+                                shifted.put(e.getKey(), e.getValue().copy());
                             }
                             required = shifted;
                         }
@@ -278,7 +319,25 @@ public class FillMaterialCalculator {
             if (inLayer) foundContainersLayer++;
 
             Map<Integer, ItemStack> realItems = RealContainerCache.getCachedItems(mainPos);
-            if (realItems == null) realItems = new HashMap<>();
+
+            if (realItems == null && halves != null) {
+                BlockPos otherHalf = pos.equals(halves[0]) ? halves[1] : halves[0];
+                realItems = RealContainerCache.getCachedItems(otherHalf);
+                if (realItems != null) mainPos = otherHalf;
+            }
+
+            if (realItems == null) {
+                if (client.world != null) {
+                    waitingForData = true;
+                    RealContainerCache.requestContainerData(mainPos);
+
+                    if (halves != null) {
+                        BlockPos otherHalf = pos.equals(halves[0]) ? halves[1] : halves[0];
+                        RealContainerCache.requestContainerData(otherHalf);
+                    }
+                }
+                realItems = new HashMap<>();
+            }
 
             Map<ItemStackKey, Integer> reqAgg = new HashMap<>();
             Map<ItemStackKey, Integer> realAgg = new HashMap<>();
@@ -304,15 +363,13 @@ public class FillMaterialCalculator {
 
                 int matched = Math.min(req, real);
 
-                foundItemsAll += req;
                 stats.totalAll += req;
-                stats.availableAll += matched;
+                stats.availableAll += real;
                 stats.missingAll += Math.max(0, req - matched);
 
                 if (inLayer) {
-                    foundItemsLayer += req;
                     stats.totalLayer += req;
-                    stats.availableLayer += matched;
+                    stats.availableLayer += real;
                     stats.missingLayer += Math.max(0, req - matched);
                 }
             }
@@ -334,348 +391,75 @@ public class FillMaterialCalculator {
             }
         }
 
+        hasMissingData = waitingForData;
+
         if (!silent && client.player != null) {
             client.player.sendMessage(net.minecraft.text.Text.translatable("litematica_container_filler.message.parsed_containers", foundContainersAll), false);
         }
     }
 
-    private static boolean testMath(MathConfig config, int targetY) {
-        String fMode = config.mode;
-        if (fMode.contains("RANGE") || fMode.contains("BOX") || fMode.contains("范围") || fMode.contains("区间")) {
-            return (targetY >= config.minY && targetY <= config.maxY);
-        } else if (fMode.contains("BELOW") || fMode.contains("DOWN") || fMode.contains("下方") || fMode.contains("以下") || fMode.contains("低于")) {
-            return (targetY <= config.singleY);
-        } else if (fMode.contains("ABOVE") || fMode.contains("UP") || fMode.contains("上方") || fMode.contains("以上") || fMode.contains("高于")) {
-            return (targetY >= config.singleY);
-        } else if (fMode.contains("SINGLE") || fMode.contains("LAYER") || fMode.contains("单层") || fMode.contains("层")) {
-            return (targetY == config.singleY);
+    /**
+     * Extract MaterialListBase from various input types using direct API calls.
+     */
+    private static MaterialListBase extractMaterialList(Object input) {
+        if (input instanceof MaterialListBase mlb) {
+            return mlb;
         }
-        return true;
-    }
-
-    private static boolean isAllMode(String fMode) {
-        return fMode.equals("ALL") || fMode.equals("NORMAL") || fMode.equals("NONE") || fMode.equals("全部") || fMode.equals("所有");
-    }
-
-    private static String extractStringValueSafe(Object val) {
-        if (val == null) return "ALL";
-        if (val instanceof String s) return s;
-        if (val instanceof Enum<?> e) return e.name();
-
+        // GuiMaterialList has a public getMaterialList() method
+        if (input instanceof GuiMaterialList gui) {
+            return gui.getMaterialList();
+        }
+        // Try if input's class has getMaterialList() (e.g. mixin-enhanced class)
         try {
-            Object enumVal = val.getClass().getMethod("getOptionListValue").invoke(val);
-            if (enumVal != null) {
-                if (enumVal instanceof Enum<?>) return ((Enum<?>) enumVal).name();
-                try { return (String) enumVal.getClass().getMethod("name").invoke(enumVal); } catch (Exception e) {}
-                try { return (String) enumVal.getClass().getMethod("getStringValue").invoke(enumVal); } catch (Exception e) {}
-                return enumVal.toString();
+            if (input != null && input.getClass().getSimpleName().contains("GuiMaterialList")) {
+                java.lang.reflect.Method m = input.getClass().getMethod("getMaterialList");
+                Object result = m.invoke(input);
+                if (result instanceof MaterialListBase mlb) return mlb;
             }
-        } catch (Exception e) {}
-
-        try { return (String) val.getClass().getMethod("getStringValue").invoke(val); } catch (Exception e) {}
-        try {
-            Object objVal = val.getClass().getMethod("getValue").invoke(val);
-            if (objVal instanceof Enum<?> e) return e.name();
-            if (objVal != null) return objVal.toString();
-        } catch (Exception e) {}
-        return val.toString();
-    }
-
-    private static Integer extractIntegerSafe(Object val) {
-        if (val == null) return null;
-        if (val instanceof Integer i) return i;
-        if (val instanceof Number n) return n.intValue();
-        try { return (Integer) val.getClass().getMethod("getIntegerValue").invoke(val); } catch (Exception e) {}
-        try { return (Integer) val.getClass().getMethod("getIntValue").invoke(val); } catch (Exception e) {}
-        try { return Integer.parseInt(val.toString()); } catch (Exception e) {}
-        try { return Integer.parseInt(extractStringValueSafe(val)); } catch (Exception e) {}
+        } catch (Exception ignored) {}
         return null;
     }
 
-    private static void parseConfigField(String cleanName, Object val, MathConfig out) {
-        if (cleanName.equals("renderlayersingle") || cleanName.equals("renderlayervalue") || cleanName.equals("singlelayer")) {
-            Integer v = extractIntegerSafe(val); if (v != null) { out.singleY = v; out.found = true; }
-        } else if (cleanName.equals("renderlayerrangemin") || cleanName.equals("layerrangemin") || cleanName.equals("rangemin")) {
-            Integer v = extractIntegerSafe(val); if (v != null) { out.minY = v; out.found = true; }
-        } else if (cleanName.equals("renderlayerrangemax") || cleanName.equals("layerrangemax") || cleanName.equals("rangemax")) {
-            Integer v = extractIntegerSafe(val); if (v != null) { out.maxY = v; out.found = true; }
-        } else if (cleanName.equals("renderlayer") || cleanName.equals("renderlayermode") || cleanName.equals("layermode")) {
-            String s = extractStringValueSafe(val).toUpperCase();
-            if (!s.isEmpty()) { out.mode = s; out.found = true; }
-        }
-    }
-
-    private static void extractMathConfig(Object target, MathConfig out) {
-        if (target == null) return;
-
-        try {
-            java.lang.reflect.Method m = target.getClass().getMethod("getConfigs");
-            List<?> configs = (List<?>) m.invoke(target);
-            if (configs != null) {
-                for (Object cfg : configs) {
-                    try {
-                        String name = (String) cfg.getClass().getMethod("getName").invoke(cfg);
-                        parseConfigField(name.toLowerCase().replace("_", ""), cfg, out);
-                    } catch (Exception e) {}
-                }
-            }
-        } catch (Exception e) {}
-
-        if (out.found) return;
-
-        Class<?> currCls = target.getClass();
-        while (currCls != null && currCls != Object.class) {
-            for (java.lang.reflect.Field f : currCls.getDeclaredFields()) {
-                f.setAccessible(true);
-                try { parseConfigField(f.getName().toLowerCase().replace("_", ""), f.get(target), out); } catch (Exception e) {}
-            }
-            currCls = currCls.getSuperclass();
-        }
-    }
-
-    private static LayerFilter buildGlobalFilter(boolean isLayerAbsolute) {
-        MathConfig config = new MathConfig();
-
-        try {
-            Object rangeObj = null;
-            try { rangeObj = fi.dy.masa.litematica.data.DataManager.getRenderLayerRange(); } catch (Exception e) {}
-            if (rangeObj != null) extractMathConfig(rangeObj, config);
-        } catch (Exception e) {}
-
-        if (!config.found) {
-            Class<?>[] clsArr = { fi.dy.masa.litematica.config.Configs.Generic.class, fi.dy.masa.litematica.config.Configs.Visuals.class };
-            for (Class<?> c : clsArr) {
-                try {
-                    for (java.lang.reflect.Field f : c.getFields()) {
-                        parseConfigField(f.getName().toLowerCase().replace("_", ""), f.get(null), config);
-                    }
-                } catch (Exception e) {}
+    private static int getItemsCount(NbtCompound nbt) {
+        if (nbt != null && nbt.contains("Items")) {
+            NbtElement el = nbt.get("Items");
+            if (el instanceof NbtList list) {
+                return list.size();
             }
         }
-
-        if (config.found) {
-            if (isAllMode(config.mode)) return null;
-
-            return (absoluteY, relativeY) -> testMath(config, absoluteY);
-        }
-        return null;
-    }
-
-    private static LayerFilter buildPlacementFilter(Object placement, boolean isLayerAbsolute) {
-        if (placement == null) return null;
-
-        MathConfig config = new MathConfig();
-
-        try {
-            Object rangeObj = null;
-            for (java.lang.reflect.Method m : placement.getClass().getMethods()) {
-                if (m.getParameterCount() == 0 && m.getReturnType().getSimpleName().contains("LayerRange")) {
-                    rangeObj = m.invoke(placement);
-                    break;
-                }
-            }
-            if (rangeObj != null) extractMathConfig(rangeObj, config);
-        } catch (Exception e) {}
-
-        if (!config.found) extractMathConfig(placement, config);
-
-        if (config.found) {
-            if (isAllMode(config.mode)) return null;
-            return (absoluteY, relativeY) -> testMath(config, isLayerAbsolute ? absoluteY : relativeY);
-        }
-        return null;
-    }
-
-    private static int getIntFromNbt(NbtElement elem) {
-        if (elem instanceof net.minecraft.nbt.AbstractNbtNumber num) return num.intValue();
         return 0;
     }
 
-    private static BlockPos extractOrigin(Object placement) {
-        if (placement == null) return null;
-        try {
-            for (java.lang.reflect.Method m : placement.getClass().getMethods()) {
-                if (m.getParameterCount() == 0 && m.getReturnType() == BlockPos.class) {
-                    String name = m.getName().toLowerCase();
-                    if (name.contains("origin") || name.contains("pos")) {
-                        return (BlockPos) m.invoke(placement);
-                    }
-                }
-            }
-        } catch (Exception ignored) {}
-        return null;
+    private static int getItemsCount(Map<Integer, ItemStack> parsedMap) {
+        return parsedMap != null ? parsedMap.size() : 0;
     }
 
-    private static void extractNbtsFromMemory(Object obj, List<NbtCompound> results, Set<Object> visited, int depth) {
-        if (obj == null || depth > 25 || !visited.add(obj)) return;
-
-        if (obj instanceof NbtCompound c) {
-            if (c.contains("Items")) results.add(c);
-            for (String key : c.getKeys()) {
-                NbtElement el = c.get(key);
-                if (el instanceof NbtCompound child) extractNbtsFromMemory(child, results, visited, depth + 1);
-                else if (el instanceof NbtList list) {
-                    for (int i = 0; i < list.size(); i++) extractNbtsFromMemory(list.get(i), results, visited, depth + 1);
-                }
-            }
-            return;
-        }
-
-        if (obj instanceof net.minecraft.block.entity.BlockEntity be) {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.world != null) {
-                try {
-                    NbtCompound c = be.createNbt(client.world.getRegistryManager());
-                    if (c != null && c.contains("Items")) results.add(c);
-                } catch (Exception ignored) {}
-            }
-            return;
-        }
-
-        if (obj instanceof Map<?, ?> map) {
-            for (Object val : map.values()) extractNbtsFromMemory(val, results, visited, depth + 1);
-            return;
-        }
-        if (obj instanceof Iterable<?> iter) {
-            for (Object val : iter) extractNbtsFromMemory(val, results, visited, depth + 1);
-            return;
-        }
-        if (obj.getClass().isArray() && !obj.getClass().getComponentType().isPrimitive()) {
-            for (Object val : (Object[]) obj) extractNbtsFromMemory(val, results, visited, depth + 1);
-            return;
-        }
-
-        String pkg = obj.getClass().getPackage() != null ? obj.getClass().getPackage().getName() : "";
-        if (!pkg.startsWith("fi.dy.masa")) return;
-
-        Class<?> clazz = obj.getClass();
-        while (clazz != null && clazz != Object.class) {
-            for (java.lang.reflect.Field f : clazz.getDeclaredFields()) {
-                if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType().isPrimitive()) continue;
-                String fname = f.getName().toLowerCase();
-                if (fname.contains("parent") || fname.contains("screen") || fname.contains("gui") || fname.contains("client") || fname.contains("world") || fname.contains("manager")) continue;
-                try {
-                    f.setAccessible(true);
-                    extractNbtsFromMemory(f.get(obj), results, visited, depth + 1);
-                } catch (Exception ignored) {}
-            }
-            clazz = clazz.getSuperclass();
-        }
-    }
-
-    private static boolean isItemIgnored(Object materialListObj, Item item) {
-        if (materialListObj != null) {
-            try {
-                for (java.lang.reflect.Method m : materialListObj.getClass().getMethods()) {
-                    String name = m.getName().toLowerCase();
-                    if (name.contains("ignore") && m.getReturnType() == boolean.class && m.getParameterCount() == 1) {
-                        Class<?> pType = m.getParameterTypes()[0];
-                        if (pType == Item.class) {
-                            return (Boolean) m.invoke(materialListObj, item);
-                        } else if (pType == net.minecraft.util.Identifier.class) {
-                            return (Boolean) m.invoke(materialListObj, net.minecraft.registry.Registries.ITEM.getId(item));
-                        } else if (pType.getSimpleName().equals("ItemType")) {
-                            try {
-                                Object itemType = pType.getConstructor(Item.class).newInstance(item);
-                                return (Boolean) m.invoke(materialListObj, itemType);
-                            } catch (Exception e) {}
-                        }
-                    }
-                }
-
-                Class<?> currClass = materialListObj.getClass();
-                while (currClass != null && currClass != Object.class) {
-                    for (java.lang.reflect.Field f : currClass.getDeclaredFields()) {
-                        if (java.util.Collection.class.isAssignableFrom(f.getType())) {
-                            String fName = f.getName().toLowerCase();
-                            if (fName.contains("ignore")) {
-                                f.setAccessible(true);
-                                java.util.Collection<?> coll = (java.util.Collection<?>) f.get(materialListObj);
-                                if (coll != null && !coll.isEmpty()) {
-                                    if (coll.contains(item)) return true;
-                                    net.minecraft.util.Identifier id = net.minecraft.registry.Registries.ITEM.getId(item);
-                                    if (coll.contains(id) || coll.contains(id.toString()) || coll.contains(id.getPath())) return true;
-
-                                    for (Object obj : coll) {
-                                        if (obj == null) continue;
-                                        if (obj == item) return true;
-                                        try {
-                                            for (java.lang.reflect.Method m : obj.getClass().getMethods()) {
-                                                if (m.getParameterCount() == 0 && m.getReturnType() == Item.class) {
-                                                    if (m.invoke(obj) == item) return true;
-                                                }
-                                            }
-                                        } catch (Exception ignored) {}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    currClass = currClass.getSuperclass();
-                }
-            } catch (Exception ignored) {}
-        }
-
-        try {
-            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
-                String cleanName = f.getName().toUpperCase().replace("_", "");
-                if (cleanName.equals("MATERIALLISTIGNORETYPES")) {
-                    Object opt = f.get(null);
-                    if (opt != null) {
-                        @SuppressWarnings("unchecked")
-                        List<String> ignoredList = (List<String>) opt.getClass().getMethod("getStrings").invoke(opt);
-                        if (ignoredList != null && !ignoredList.isEmpty()) {
-                            net.minecraft.util.Identifier id = net.minecraft.registry.Registries.ITEM.getId(item);
-                            if (ignoredList.contains(id.toString()) || ignoredList.contains(id.getPath())) {
-                                return true;
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        } catch (Exception ignored) {}
-
+    /**
+     * Check if an item is in the material list's ignored set.
+     * Uses direct API — MaterialListBase.ignored is checked via the filtered list mechanism.
+     * We don't need to check it manually since setMaterialListEntries → refreshPreFilteredList
+     * already filters out ignored entries.
+     */
+    private static boolean isItemIgnored(MaterialListBase materialList, Item item) {
+        // MaterialListBase handles ignored items internally via refreshPreFilteredList()
+        // No need to check here — the filtering happens automatically when we inject
         return false;
     }
 
     public static List<MaterialListEntry> getCustomMaterialList(Object materialListObj) {
         boolean limitToLayer = true;
 
-        try {
-            for (java.lang.reflect.Field f : fi.dy.masa.litematica.config.Configs.Generic.class.getFields()) {
-                String cleanName = f.getName().toUpperCase().replace("_", "");
-
-                if (cleanName.equals("MATERIALLISTDISPLAYTYPE") || cleanName.equals("MATERIALLISTLIMITTOLAYER") || cleanName.equals("MATERIALLISTIGNORERENDERLAYER")) {
-                    Object opt = f.get(null);
-                    if (opt != null) {
-                        boolean resolved = false;
-                        try {
-                            boolean bVal = (Boolean) opt.getClass().getMethod("getBooleanValue").invoke(opt);
-                            limitToLayer = cleanName.contains("IGNORE") ? !bVal : bVal;
-                            resolved = true;
-                        } catch (Exception ignored) {}
-
-                        if (!resolved) {
-                            String sVal = extractStringValueSafe(opt).toUpperCase();
-                            if (sVal.equals("ALL") || sVal.equals("NONE") || sVal.contains("全部") || sVal.contains("所有")) {
-                                limitToLayer = false;
-                            } else {
-                                limitToLayer = true;
-                            }
-                        }
-                    }
-                }
+        // Use the public IMaterialList interface to get the list type
+        if (materialListObj instanceof IMaterialList iMatList) {
+            BlockInfoListType type = iMatList.getMaterialListType();
+            if (type != null) {
+                limitToLayer = type.name().contains("LAYER");
             }
-        } catch (Exception ignored) {}
+        }
 
         List<MaterialListEntry> list = new ArrayList<>();
 
         for (Map.Entry<ItemStackKey, ItemStats> entry : itemStatsCache.entrySet()) {
-            if (isItemIgnored(materialListObj, entry.getKey().item)) {
-                continue;
-            }
-
             ItemStats stats = entry.getValue();
 
             int total = limitToLayer ? stats.totalLayer : stats.totalAll;
@@ -688,10 +472,47 @@ public class FillMaterialCalculator {
             ItemStack stack = stats.representative;
             if (stack.isEmpty()) stack = new ItemStack(entry.getKey().item);
 
-            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, mismatch);
+            // mismatch is set to 0 because our "mismatch" (extra items in container) is semantically
+            // different from Litematica's "mismatch" (wrong block type, subset of missing).
+            // Litematica's progress bar formula: missing = countMissing - countMismatched
+            // If we pass our independent mismatch value, it produces negative percentages.
+            MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, 0);
             list.add(matEntry);
         }
 
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player != null && !list.isEmpty()) {
+            fi.dy.masa.litematica.materials.MaterialListUtils.updateAvailableCounts(list, client.player);
+        }
+
         return list;
+    }
+
+    public static List<MaterialListEntry> mergeLists(List<MaterialListEntry> vanillaList, List<MaterialListEntry> containerList) {
+        Map<ItemStackKey, MaterialListEntry> mergedMap = new java.util.LinkedHashMap<>();
+
+        for (MaterialListEntry v : vanillaList) {
+            mergedMap.put(new ItemStackKey(v.getStack()), v);
+        }
+
+        for (MaterialListEntry c : containerList) {
+            ItemStackKey key = new ItemStackKey(c.getStack());
+            MaterialListEntry v = mergedMap.get(key);
+
+            if (v != null) {
+                MaterialListEntry combined = new MaterialListEntry(
+                        c.getStack(),
+                        v.getCountTotal() + c.getCountTotal(),
+                        v.getCountMissing() + c.getCountMissing(),
+                        v.getCountAvailable(),
+                        v.getCountMismatched() + c.getCountMismatched()
+                );
+                mergedMap.put(key, combined);
+            } else {
+                mergedMap.put(key, c);
+            }
+        }
+
+        return new ArrayList<>(mergedMap.values());
     }
 }

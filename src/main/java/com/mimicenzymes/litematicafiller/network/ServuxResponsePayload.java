@@ -22,7 +22,6 @@ public record ServuxResponsePayload(BlockPos pos, Map<Integer, ItemStack> items)
                 BlockPos parsedPos = null;
 
                 try {
-
                     parsedPos = buf.readBlockPos();
                     int size = buf.readVarInt();
 
@@ -33,7 +32,12 @@ public record ServuxResponsePayload(BlockPos pos, Map<Integer, ItemStack> items)
                             parsedItems.put(slot, stack);
                         }
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                } finally {
+                    if (buf.readableBytes() > 0) {
+                        buf.skipBytes(buf.readableBytes());
+                    }
+                }
 
                 return new ServuxResponsePayload(parsedPos != null ? parsedPos : BlockPos.ORIGIN, parsedItems);
             }
