@@ -1,14 +1,16 @@
 package com.mimicenzymes.litematicafiller.mixin;
 
-import com.google.common.collect.ImmutableList;
+import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.materials.FillMaterialCalculator;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
 import fi.dy.masa.litematica.materials.MaterialListBase;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
+import fi.dy.masa.litematica.materials.IMaterialList;
 import fi.dy.masa.malilib.gui.GuiBase;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.util.StringUtils;
 import net.minecraft.client.MinecraftClient;
+import com.google.common.collect.ImmutableList;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -23,36 +25,31 @@ import java.util.List;
 @Mixin(value = GuiMaterialList.class, remap = false)
 public abstract class GuiMaterialListMixin extends GuiBase {
 
-    // Direct access to materialList — no reflection needed
     @Shadow @Final private MaterialListBase materialList;
 
-    // Cached reflection field for materialListAll (the ONLY reflection needed)
-    // materialListAll is a protected ImmutableList field with no independent setter
-    @Unique private static java.lang.reflect.Field cachedMaterialListAllField = null;
-    @Unique private static boolean reflectionInitialized = false;
+    @Unique private static java.lang.reflect.Field mimic_materialListAllField = null;
+    @Unique private static boolean mimic_reflectionInit = false;
 
     @Unique private boolean mimic_isMonitorRunning = false;
     @Unique private boolean mimic_needsCalculation = true;
     @Unique private List<MaterialListEntry> mimic_cachedVanillaList = null;
-    @Unique private List<MaterialListEntry> mimic_lastInjectedList = null;
-    @Unique private boolean mimic_isInjecting = false; // re-entrancy guard
-    @Unique private long mimic_lastLabelTotal = -1;
-    @Unique private long mimic_lastLabelMissing = -1;
+    @Unique private ImmutableList<MaterialListEntry> mimic_lastInjectedRef = null;
+    @Unique private boolean mimic_isInjecting = false;
 
     @Inject(method = "initGui", at = @At("RETURN"))
     private void onInitGui(CallbackInfo ci) {
-        // Skip everything if mod is disabled
-        if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) return;
+        if (!Configs.ENABLE_MOD.getBooleanValue()) return;
 
-        // Always add the toggle button (initGui rebuilds all buttons every time)
         mimic_addToggleButton();
 
-        // If this is a re-entrant call from our own injection, only add button, skip injection
         if (mimic_isInjecting) return;
 
         mimic_needsCalculation = true;
 
-        // Start watchdog thread (50ms interval for incremental container data loading)
+        if (FillMaterialCalculator.listMode != 0) {
+            mimic_injectSilently();
+        }
+
         if (!mimic_isMonitorRunning) {
             mimic_isMonitorRunning = true;
             Thread monitor = new Thread(() -> {
@@ -68,9 +65,7 @@ public abstract class GuiMaterialListMixin extends GuiBase {
                             MinecraftClient.getInstance().execute(() -> {
                                 if (MinecraftClient.getInstance().currentScreen == this) {
                                     if (forceRefresh) mimic_needsCalculation = true;
-                                    mimic_injectContainerData();
-                                    // Refresh labels if counts changed and user isn't typing
-                                    mimic_refreshLabelsIfNeeded();
+                                    mimic_injectSilently();
                                 }
                             });
                         }
@@ -81,25 +76,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
             monitor.setDaemon(true);
             monitor.setName("LitematicaFiller-InjectionWatchdog");
             monitor.start();
-        }
-
-        // IMMEDIATE data update — don't wait for the watchdog thread.
-        if (FillMaterialCalculator.listMode != 0) {
-            mimic_injectContainerData();
-            // After injection, re-call initGui() to refresh the progress labels
-            // (total/done/missing percentages). The mimic_isInjecting guard prevents
-            // re-injection on the re-entrant call.
-            mimic_isInjecting = true;
-            try {
-                this.initGui();
-            } finally {
-                mimic_isInjecting = false;
-            }
-        } else if (mimic_cachedVanillaList != null && mimic_lastInjectedList != null) {
-            // Mode 0 (blocks only): restore vanilla list if we previously injected
-            mimic_directSetMaterialList(materialList, mimic_cachedVanillaList);
-            mimic_lastInjectedList = null;
-            mimic_refreshWidget();
         }
     }
 
@@ -136,74 +112,57 @@ public abstract class GuiMaterialListMixin extends GuiBase {
             }
         } catch (Exception ignored) {}
 
-        ButtonGeneric toggleBtn = new ButtonGeneric(maxX + 1, targetY, 80, 20, text);
+        ButtonGeneric toggleBtn = new ButtonGeneric(maxX + 1, targetY, 120, 20, text);
 
         this.addButton(toggleBtn, (button, mouseButton) -> {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
             mimic_needsCalculation = true;
-            this.initGui();
+            mimic_lastInjectedRef = null;
+
+            mimic_injectViaApi();
         });
     }
 
-    /**
-     * Initialize cached reflection for the materialListAll field.
-     * This is the ONLY reflection used - needed because materialListAll is protected
-     * with no independent setter (setMaterialListEntries triggers initGui callback).
-     */
     @Unique
-    private static void mimic_initReflection() {
-        if (reflectionInitialized) return;
-        reflectionInitialized = true;
+    private void mimic_injectViaApi() {
         try {
-            for (java.lang.reflect.Field f : MaterialListBase.class.getDeclaredFields()) {
-                if (f.getType() == ImmutableList.class) {
-                    f.setAccessible(true);
-                    cachedMaterialListAllField = f;
-                    break;
-                }
+            if (!(materialList instanceof IMaterialList iMatList)) return;
+            if (mimic_cachedVanillaList == null) {
+                ImmutableList<MaterialListEntry> current = mimic_readMaterialListAll();
+                if (current != null) mimic_cachedVanillaList = new ArrayList<>(current);
             }
+            if (mimic_cachedVanillaList == null) return;
+
+            FillMaterialCalculator.calculate(this, true);
+            mimic_needsCalculation = false;
+
+            List<MaterialListEntry> targetList = mimic_buildTargetList();
+
+            mimic_isInjecting = true;
+            try {
+                iMatList.setMaterialListEntries(targetList);
+            } finally {
+                mimic_isInjecting = false;
+            }
+
+            ImmutableList<MaterialListEntry> newRef = mimic_readMaterialListAll();
+            mimic_lastInjectedRef = newRef;
+
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    /**
-     * Directly set materialListAll without triggering onTaskCompleted → initGui.
-     * This prevents the multiplier text field from being destroyed/rebuilt every 50ms.
-     */
     @Unique
-    private static void mimic_directSetMaterialList(MaterialListBase list, List<MaterialListEntry> entries) {
-        mimic_initReflection();
-        if (cachedMaterialListAllField != null) {
-            try {
-                cachedMaterialListAllField.set(list, ImmutableList.copyOf(entries));
-                list.refreshPreFilteredList();
-                list.updateCounts();
-                return;
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-        // Fallback: use official API (will trigger initGui but at least works)
-        list.setMaterialListEntries(entries);
-    }
-
-    /**
-     * Core injection logic. Uses direct field injection to avoid triggering initGui.
-     */
-    @Unique
-    private void mimic_injectContainerData() {
+    @SuppressWarnings("unchecked")
+    private void mimic_injectSilently() {
         try {
-            MaterialListBase list = this.materialList;
-            if (list == null) return;
+            ImmutableList<MaterialListEntry> currentRef = mimic_readMaterialListAll();
+            if (currentRef == null) return;
 
-            List<MaterialListEntry> currentBaseList = list.getMaterialsAll();
-
-            // Detect when Litematica natively recalculates (Refresh button etc.)
-            // by checking if the current list reference changed from our last injection
-            if (currentBaseList != mimic_lastInjectedList) {
-                mimic_cachedVanillaList = new ArrayList<>(currentBaseList);
+            if (currentRef != mimic_lastInjectedRef) {
+                mimic_cachedVanillaList = new ArrayList<>(currentRef);
                 mimic_needsCalculation = true;
             }
 
@@ -216,30 +175,17 @@ public abstract class GuiMaterialListMixin extends GuiBase {
                 return;
             }
 
-            // Build target list based on mode
-            List<MaterialListEntry> targetList;
+            List<MaterialListEntry> targetList = mimic_buildTargetList();
 
-            if (FillMaterialCalculator.listMode == 1) {
-                targetList = FillMaterialCalculator.getCustomMaterialList(list);
-            } else if (FillMaterialCalculator.listMode == 2) {
-                targetList = FillMaterialCalculator.mergeLists(
-                        mimic_cachedVanillaList,
-                        FillMaterialCalculator.getCustomMaterialList(list)
-                );
-            } else {
-                targetList = new ArrayList<>(mimic_cachedVanillaList);
-            }
-
-            // Save/restore scroll position
             int scroll = mimic_getScrollPosition();
 
-            // Direct injection — does NOT trigger onTaskCompleted/initGui
-            mimic_directSetMaterialList(list, targetList);
+            mimic_writeMaterialListAll(ImmutableList.copyOf(targetList));
 
-            // Track the injected list reference to detect native recalculations
-            mimic_lastInjectedList = list.getMaterialsAll();
+            materialList.refreshPreFilteredList();
+            materialList.updateCounts();
 
-            // Refresh the widget so it picks up the new data immediately
+            mimic_lastInjectedRef = mimic_readMaterialListAll();
+
             mimic_refreshWidget();
 
             mimic_setScrollPosition(scroll);
@@ -249,41 +195,58 @@ public abstract class GuiMaterialListMixin extends GuiBase {
         }
     }
 
-    /**
-     * Check if the progress bar labels need refreshing (counts changed).
-     * Only refreshes if no text field has focus (preserves multiplier input).
-     */
     @Unique
-    private void mimic_refreshLabelsIfNeeded() {
-        try {
-            long newTotal = materialList.getCountTotal();
-            long newMissing = materialList.getCountMissing();
-            if (newTotal == mimic_lastLabelTotal && newMissing == mimic_lastLabelMissing) return;
-
-            // Only refresh labels if user isn't typing in the multiplier text field
-            if (this.getFocused() != null) return;
-
-            mimic_lastLabelTotal = newTotal;
-            mimic_lastLabelMissing = newMissing;
-
-            // Re-call initGui with guard to refresh labels without re-injecting data
-            mimic_isInjecting = true;
-            try {
-                this.initGui();
-            } finally {
-                mimic_isInjecting = false;
-            }
-        } catch (Exception ignored) {}
+    private List<MaterialListEntry> mimic_buildTargetList() {
+        if (FillMaterialCalculator.listMode == 1) {
+            return FillMaterialCalculator.getCustomMaterialList(materialList);
+        } else if (FillMaterialCalculator.listMode == 2) {
+            return FillMaterialCalculator.mergeLists(
+                    mimic_cachedVanillaList,
+                    FillMaterialCalculator.getCustomMaterialList(materialList));
+        } else {
+            return new ArrayList<>(mimic_cachedVanillaList);
+        }
     }
 
-    /**
-     * Refresh the list widget's displayed entries after data injection.
-     * Without this, the widget would show stale data until the next initGui() call.
-     */
+    @Unique
+    private static void mimic_ensureReflection() {
+        if (mimic_reflectionInit) return;
+        mimic_reflectionInit = true;
+        try {
+            mimic_materialListAllField = MaterialListBase.class.getDeclaredField("materialListAll");
+            mimic_materialListAllField.setAccessible(true);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Unique
+    @SuppressWarnings("unchecked")
+    private ImmutableList<MaterialListEntry> mimic_readMaterialListAll() {
+        mimic_ensureReflection();
+        if (mimic_materialListAllField == null) return null;
+        try {
+            return (ImmutableList<MaterialListEntry>) mimic_materialListAllField.get(materialList);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    @Unique
+    private void mimic_writeMaterialListAll(ImmutableList<MaterialListEntry> list) {
+        mimic_ensureReflection();
+        if (mimic_materialListAllField == null) return;
+        try {
+            mimic_materialListAllField.set(materialList, list);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
     @Unique
     private void mimic_refreshWidget() {
         try {
-            Object widget = mimic_getListWidget();
+            Object widget = mimic_getWidget();
             if (widget != null) {
                 widget.getClass().getMethod("refreshEntries").invoke(widget);
             }
@@ -291,9 +254,26 @@ public abstract class GuiMaterialListMixin extends GuiBase {
     }
 
     @Unique
+    private Object mimic_getWidget() {
+        try {
+            Class<?> curr = this.getClass();
+            while (curr != null) {
+                for (java.lang.reflect.Field f : curr.getDeclaredFields()) {
+                    if (f.getName().equals("m_widget") || f.getName().equals("widget")) {
+                        f.setAccessible(true);
+                        return f.get(this);
+                    }
+                }
+                curr = curr.getSuperclass();
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    @Unique
     private int mimic_getScrollPosition() {
         try {
-            Object widget = mimic_getListWidget();
+            Object widget = mimic_getWidget();
             if (widget != null) {
                 Object scrollbar = widget.getClass().getMethod("getScrollbar").invoke(widget);
                 return (int) scrollbar.getClass().getMethod("getValue").invoke(scrollbar);
@@ -306,49 +286,11 @@ public abstract class GuiMaterialListMixin extends GuiBase {
     private void mimic_setScrollPosition(int scroll) {
         if (scroll <= 0) return;
         try {
-            Object widget = mimic_getListWidget();
+            Object widget = mimic_getWidget();
             if (widget != null) {
                 Object scrollbar = widget.getClass().getMethod("getScrollbar").invoke(widget);
                 scrollbar.getClass().getMethod("setValue", int.class).invoke(scrollbar, scroll);
             }
         } catch (Exception ignored) {}
-    }
-
-    /**
-     * Get the list widget via cached reflection on the protected getListWidget() method.
-     * GuiMaterialList inherits this from GuiListBase, but it's protected so we can't call
-     * it directly from the mixin at compile time.
-     */
-    @Unique
-    private static java.lang.reflect.Method cachedGetListWidgetMethod = null;
-    @Unique
-    private static boolean listWidgetMethodResolved = false;
-
-    @Unique
-    private Object mimic_getListWidget() {
-        try {
-            if (!listWidgetMethodResolved) {
-                listWidgetMethodResolved = true;
-                cachedGetListWidgetMethod = GuiMaterialList.class.getMethod("getListWidget");
-                cachedGetListWidgetMethod.setAccessible(true);
-            }
-            if (cachedGetListWidgetMethod != null) {
-                return cachedGetListWidgetMethod.invoke(this);
-            }
-        } catch (NoSuchMethodException e) {
-            // Try searching up the hierarchy
-            try {
-                Class<?> cls = GuiMaterialList.class;
-                while (cls != null) {
-                    try {
-                        cachedGetListWidgetMethod = cls.getDeclaredMethod("getListWidget");
-                        cachedGetListWidgetMethod.setAccessible(true);
-                        return cachedGetListWidgetMethod.invoke(this);
-                    } catch (NoSuchMethodException ignored) {}
-                    cls = cls.getSuperclass();
-                }
-            } catch (Exception ignored) {}
-        } catch (Exception ignored) {}
-        return null;
     }
 }

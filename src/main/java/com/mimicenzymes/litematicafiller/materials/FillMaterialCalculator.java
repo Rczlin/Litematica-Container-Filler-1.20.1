@@ -44,12 +44,6 @@ public class FillMaterialCalculator {
     public static volatile boolean hasMissingData = false;
 
     private static final Map<SchematicPlacement, List<NbtContext>> PLACEMENT_NBT_CACHE = new IdentityHashMap<>();
-
-    /**
-     * Key for aggregating items. For regular items, groups by item type + custom name.
-     * For container items (shulker boxes), also includes a hash of the container contents
-     * so that shulker boxes with different items are shown separately.
-     */
     public static class ItemStackKey {
         public final Item item;
         public final String customName;
@@ -62,12 +56,7 @@ public class FillMaterialCalculator {
             this.containerHash = computeContainerHash(stack);
         }
 
-        /**
-         * Compute a hash of the container contents for shulker boxes.
-         * Returns 0 for non-container items.
-         */
         private static int computeContainerHash(ItemStack stack) {
-            // Only compute container hash for shulker box items
             if (!(stack.getItem() instanceof BlockItem blockItem) ||
                 !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
                 return 0;
@@ -76,14 +65,12 @@ public class FillMaterialCalculator {
             ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
             if (container == null) return 0;
 
-            // Build a content-based hash from all items in the container
             int hash = 0;
             int slot = 0;
             for (ItemStack contained : container.iterateNonEmpty()) {
                 hash = 31 * hash + Registries.ITEM.getId(contained.getItem()).hashCode();
                 hash = 31 * hash + contained.getCount();
                 hash = 31 * hash + slot;
-                // Include custom name of contained items too
                 net.minecraft.text.Text cName = contained.get(DataComponentTypes.CUSTOM_NAME);
                 if (cName != null) hash = 31 * hash + cName.getString().hashCode();
                 slot++;
@@ -147,11 +134,9 @@ public class FillMaterialCalculator {
                 if (obj instanceof SchematicPlacement sp) placementsToScan.add(sp);
             }
         } else {
-            // Extract MaterialListBase from the input
             MaterialListBase matList = extractMaterialList(input);
 
             if (matList != null) {
-                // Get SchematicPlacement via accessor mixin (no reflection!)
                 if (matList instanceof MaterialListPlacement mlp) {
                     SchematicPlacement sp = ((MaterialListPlacementAccessor) mlp).getPlacement();
                     if (sp != null) {
@@ -392,24 +377,15 @@ public class FillMaterialCalculator {
         }
 
         hasMissingData = waitingForData;
-
-        if (!silent && client.player != null) {
-            client.player.sendMessage(net.minecraft.text.Text.translatable("litematica_container_filler.message.parsed_containers", foundContainersAll), false);
-        }
     }
 
-    /**
-     * Extract MaterialListBase from various input types using direct API calls.
-     */
     private static MaterialListBase extractMaterialList(Object input) {
         if (input instanceof MaterialListBase mlb) {
             return mlb;
         }
-        // GuiMaterialList has a public getMaterialList() method
         if (input instanceof GuiMaterialList gui) {
             return gui.getMaterialList();
         }
-        // Try if input's class has getMaterialList() (e.g. mixin-enhanced class)
         try {
             if (input != null && input.getClass().getSimpleName().contains("GuiMaterialList")) {
                 java.lang.reflect.Method m = input.getClass().getMethod("getMaterialList");
@@ -434,22 +410,13 @@ public class FillMaterialCalculator {
         return parsedMap != null ? parsedMap.size() : 0;
     }
 
-    /**
-     * Check if an item is in the material list's ignored set.
-     * Uses direct API — MaterialListBase.ignored is checked via the filtered list mechanism.
-     * We don't need to check it manually since setMaterialListEntries → refreshPreFilteredList
-     * already filters out ignored entries.
-     */
     private static boolean isItemIgnored(MaterialListBase materialList, Item item) {
-        // MaterialListBase handles ignored items internally via refreshPreFilteredList()
-        // No need to check here — the filtering happens automatically when we inject
         return false;
     }
 
     public static List<MaterialListEntry> getCustomMaterialList(Object materialListObj) {
         boolean limitToLayer = true;
 
-        // Use the public IMaterialList interface to get the list type
         if (materialListObj instanceof IMaterialList iMatList) {
             BlockInfoListType type = iMatList.getMaterialListType();
             if (type != null) {
@@ -472,10 +439,6 @@ public class FillMaterialCalculator {
             ItemStack stack = stats.representative;
             if (stack.isEmpty()) stack = new ItemStack(entry.getKey().item);
 
-            // mismatch is set to 0 because our "mismatch" (extra items in container) is semantically
-            // different from Litematica's "mismatch" (wrong block type, subset of missing).
-            // Litematica's progress bar formula: missing = countMissing - countMismatched
-            // If we pass our independent mismatch value, it produces negative percentages.
             MaterialListEntry matEntry = new MaterialListEntry(stack, total, missing, available, 0);
             list.add(matEntry);
         }
