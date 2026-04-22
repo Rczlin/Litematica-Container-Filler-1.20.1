@@ -9,6 +9,7 @@
     "ClientPlayNetworkHandlerMixin",
     "GuiMainMenuMixin",
     "GuiMaterialListMixin",
+    "MaterialListBaseMixin",
     "BlockEntityMixin",
     "LootableContainerBlockEntityMixin",
     "CrafterBlockEntityMixin",

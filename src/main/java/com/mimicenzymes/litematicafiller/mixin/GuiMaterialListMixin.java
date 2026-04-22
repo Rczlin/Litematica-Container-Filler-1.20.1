@@ -25,10 +25,8 @@ import java.util.List;
 @Mixin(value = GuiMaterialList.class, remap = false)
 public abstract class GuiMaterialListMixin extends GuiBase {
 
-    // Direct @Shadow — no reflection needed for this field
     @Shadow @Final private MaterialListBase materialList;
 
-    // Cached reflection for materialListAll (protected ImmutableList, no public setter for field-only writes)
     @Unique private static java.lang.reflect.Field mimic_materialListAllField = null;
     @Unique private static boolean mimic_reflectionInit = false;
 
@@ -36,27 +34,22 @@ public abstract class GuiMaterialListMixin extends GuiBase {
     @Unique private boolean mimic_needsCalculation = true;
     @Unique private List<MaterialListEntry> mimic_cachedVanillaList = null;
     @Unique private ImmutableList<MaterialListEntry> mimic_lastInjectedRef = null;
-    @Unique private boolean mimic_isInjecting = false; // re-entrancy guard
+    @Unique private boolean mimic_isInjecting = false;
 
     @Inject(method = "initGui", at = @At("RETURN"))
     private void onInitGui(CallbackInfo ci) {
         if (!Configs.ENABLE_MOD.getBooleanValue()) return;
 
-        // Always add the toggle button (initGui rebuilds all buttons every time)
         mimic_addToggleButton();
 
-        // If this is a re-entrant call from setMaterialListEntries() → onTaskCompleted() → initGui(),
-        // skip injection. Stats labels & column widths are already correct.
         if (mimic_isInjecting) return;
 
         mimic_needsCalculation = true;
 
-        // Immediately inject if in container/merged mode (don't wait for watchdog)
         if (FillMaterialCalculator.listMode != 0) {
             mimic_injectSilently();
         }
 
-        // Start watchdog thread (50ms interval for incremental container data loading)
         if (!mimic_isMonitorRunning) {
             mimic_isMonitorRunning = true;
             Thread monitor = new Thread(() -> {
@@ -125,18 +118,12 @@ public abstract class GuiMaterialListMixin extends GuiBase {
             FillMaterialCalculator.listMode = (FillMaterialCalculator.listMode + 1) % 3;
             FillMaterialCalculator.isFillMode = (FillMaterialCalculator.listMode != 0);
             mimic_needsCalculation = true;
-            mimic_lastInjectedRef = null; // force re-detect vanilla list
+            mimic_lastInjectedRef = null;
 
-            // Mode switch: use full API injection to rebuild widgets, column widths, etc.
             mimic_injectViaApi();
         });
     }
 
-    /**
-     * Full API injection: used for mode switches and initial load.
-     * Triggers initGui() → full widget + stats + column width rebuild.
-     * This is acceptable because the user is actively switching modes.
-     */
     @Unique
     private void mimic_injectViaApi() {
         try {
@@ -159,7 +146,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
                 mimic_isInjecting = false;
             }
 
-            // Track the new ImmutableList reference
             ImmutableList<MaterialListEntry> newRef = mimic_readMaterialListAll();
             mimic_lastInjectedRef = newRef;
 
@@ -168,26 +154,13 @@ public abstract class GuiMaterialListMixin extends GuiBase {
         }
     }
 
-    /**
-     * Silent field injection: used by the watchdog for incremental updates.
-     * Does NOT trigger initGui() → preserves text field focus and widget stability.
-     *
-     * This manually replicates setMaterialListEntries() logic:
-     *   materialListAll = ImmutableList.copyOf(list)
-     *   refreshPreFilteredList()  (public — respects ignored set)
-     *   updateCounts()            (public — updates bottom stats)
-     * but skips onTaskCompleted() → initGui().
-     */
     @Unique
     @SuppressWarnings("unchecked")
     private void mimic_injectSilently() {
         try {
-            // Read current materialListAll to detect vanilla recalculations
             ImmutableList<MaterialListEntry> currentRef = mimic_readMaterialListAll();
             if (currentRef == null) return;
 
-            // If the base list changed (Litematica recalculated, e.g. layer change),
-            // re-cache the vanilla list
             if (currentRef != mimic_lastInjectedRef) {
                 mimic_cachedVanillaList = new ArrayList<>(currentRef);
                 mimic_needsCalculation = true;
@@ -195,33 +168,26 @@ public abstract class GuiMaterialListMixin extends GuiBase {
 
             if (mimic_cachedVanillaList == null) return;
 
-            // Only recalculate when needed
             if (mimic_needsCalculation) {
                 FillMaterialCalculator.calculate(this, true);
                 mimic_needsCalculation = false;
             } else if (!FillMaterialCalculator.hasMissingData) {
-                return; // No new data, skip injection
+                return;
             }
 
             List<MaterialListEntry> targetList = mimic_buildTargetList();
 
-            // Save scroll position
             int scroll = mimic_getScrollPosition();
 
-            // Write materialListAll directly (no initGui triggered)
             mimic_writeMaterialListAll(ImmutableList.copyOf(targetList));
 
-            // Replicate the rest of setMaterialListEntries() WITHOUT onTaskCompleted()
-            materialList.refreshPreFilteredList(); // public — respects ignored set
-            materialList.updateCounts();           // public — updates bottom stats
+            materialList.refreshPreFilteredList();
+            materialList.updateCounts();
 
-            // Track the new reference
             mimic_lastInjectedRef = mimic_readMaterialListAll();
 
-            // Refresh widget display without full rebuild
             mimic_refreshWidget();
 
-            // Restore scroll position
             mimic_setScrollPosition(scroll);
 
         } catch (Exception e) {
@@ -229,9 +195,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
         }
     }
 
-    /**
-     * Build the target list based on current mode.
-     */
     @Unique
     private List<MaterialListEntry> mimic_buildTargetList() {
         if (FillMaterialCalculator.listMode == 1) {
@@ -244,8 +207,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
             return new ArrayList<>(mimic_cachedVanillaList);
         }
     }
-
-    // ---- Reflection helpers (minimal, cached) ----
 
     @Unique
     private static void mimic_ensureReflection() {
@@ -282,9 +243,6 @@ public abstract class GuiMaterialListMixin extends GuiBase {
         }
     }
 
-    /**
-     * Refresh the widget's displayed entries without a full initGui() rebuild.
-     */
     @Unique
     private void mimic_refreshWidget() {
         try {
