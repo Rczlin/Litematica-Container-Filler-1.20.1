@@ -210,6 +210,8 @@ jobs:
 
       - name: Publish GitHub release
         uses: Kira-NT/mc-publish@v3.3.0
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
           github-tag: ${{ github.event.inputs.releaseTag }}
           github-name: ${{ github.event.inputs.releaseTag }}
@@ -236,6 +238,8 @@ jobs:
 
       - name: Publish ${{ matrix.mod_version }} to Modrinth
         uses: Kira-NT/mc-publish@v3.3.0
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
           modrinth-id: oxOV4WLc
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
