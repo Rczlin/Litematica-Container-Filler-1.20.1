@@ -377,10 +377,6 @@ public class FillMaterialCalculator {
         }
 
         hasMissingData = waitingForData;
-
-        if (!silent && client.player != null) {
-            client.player.sendMessage(net.minecraft.text.Text.translatable("litematica_container_filler.message.parsed_containers", foundContainersAll), false);
-        }
     }
 
     private static MaterialListBase extractMaterialList(Object input) {
