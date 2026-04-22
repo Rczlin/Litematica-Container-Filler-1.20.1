@@ -2,6 +2,7 @@ package com.mimicenzymes.litematicafiller.core;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
+import fi.dy.masa.litematica.data.EntitiesDataStorage;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
@@ -25,7 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class RealContainerCache {
     private static final Map<BlockPos, Map<Integer, ItemStack>> CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> LOCK_CACHE = new ConcurrentHashMap<>();
+    private static final Map<BlockPos, Map<Integer, ItemStack>> SYNC_SNAPSHOT_CACHE = new ConcurrentHashMap<>();
+    private static final Map<BlockPos, Long> SYNC_SNAPSHOT_TIME = new ConcurrentHashMap<>();
     private static BlockPos lastLookedPos = null;
+    private static final long SYNC_SNAPSHOT_TTL_MS = 15000L;
 
     private static final Map<BlockPos, Map<Integer, ItemStack>> NBT_QUERY_CACHE = new ConcurrentHashMap<>();
     private static final Map<Integer, BlockPos> PENDING_NBT_REQUESTS = new ConcurrentHashMap<>();
@@ -117,27 +121,48 @@ public class RealContainerCache {
             BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(schematicWorld, pos, state);
 
             if (halves != null) {
-                Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(halves[0]);
-                if (servuxData == null) servuxData = ServuxSyncHandler.getCachedData(halves[1]);
-                if (servuxData != null) return servuxData;
-
-                Map<Integer, ItemStack> right = NBT_QUERY_CACHE.get(halves[0]);
-                Map<Integer, ItemStack> left = NBT_QUERY_CACHE.get(halves[1]);
-
-                if (right != null || left != null) {
-                    Map<Integer, ItemStack> combined = new HashMap<>();
-                    if (right != null) combined.putAll(right);
-                    if (left != null) {
-                        left.forEach((k, v) -> combined.put(k + 27, v));
-                    }
+                Map<Integer, ItemStack> combined = getCombinedLitematicaSyncedItems(halves[0], halves[1]);
+                if (combined != null) {
+                    rememberSyncedData(halves, combined);
                     return combined;
                 }
+
+                combined = combineHalves(ServuxSyncHandler.getCachedData(halves[0]), ServuxSyncHandler.getCachedData(halves[1]));
+                if (combined != null) {
+                    rememberSyncedData(halves, combined);
+                    return combined;
+                }
+
+                combined = combineHalves(NBT_QUERY_CACHE.get(halves[0]), NBT_QUERY_CACHE.get(halves[1]));
+                if (combined != null) return combined;
+
+                Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
+                if (snapshot != null) {
+                    requestContainerData(pos);
+                    return snapshot;
+                }
+
                 return null;
             }
         }
 
+        Map<Integer, ItemStack> litematicaData = getLitematicaSyncedItems(pos);
+        if (litematicaData != null) {
+            rememberSyncedData(pos, litematicaData);
+            return litematicaData;
+        }
+
         Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(pos);
-        if (servuxData != null) return servuxData;
+        if (servuxData != null) {
+            rememberSyncedData(pos, servuxData);
+            return servuxData;
+        }
+
+        Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
+        if (snapshot != null) {
+            requestContainerData(pos);
+            return snapshot;
+        }
 
         return NBT_QUERY_CACHE.get(pos);
     }
@@ -156,6 +181,11 @@ public class RealContainerCache {
         }
 
         if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
+            if (requestLitematicaData(pos, halves, isDouble)) {
+                LAST_REQUEST_TIME.put(pos, now);
+                return;
+            }
+
             if (isDouble) {
                 boolean s1 = ServuxSyncHandler.requestData(halves[0]);
                 boolean s2 = ServuxSyncHandler.requestData(halves[1]);
@@ -215,7 +245,23 @@ public class RealContainerCache {
         }
     }
 
-    public static Set<Integer> getCachedLocks(BlockPos pos) { return LOCK_CACHE.get(pos); }
+    public static Set<Integer> getCachedLocks(BlockPos pos) {
+        Set<Integer> locks = LOCK_CACHE.get(pos);
+        if (locks != null) return locks;
+
+        NbtCompound nbt = getLitematicaSyncedNbt(pos);
+        if (nbt == null) return null;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world != null && (nbt.contains("disabled_slots") ||
+                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock)) {
+            locks = parseDisabledSlots(nbt);
+            LOCK_CACHE.put(pos.toImmutable(), locks);
+            return locks;
+        }
+
+        return null;
+    }
 
     public static void putLock(BlockPos pos, Set<Integer> locks) {
         if (pos == null || locks == null) return;
@@ -319,6 +365,8 @@ public class RealContainerCache {
     public static void clear() {
         CACHE.clear();
         LOCK_CACHE.clear();
+        SYNC_SNAPSHOT_CACHE.clear();
+        SYNC_SNAPSHOT_TIME.clear();
         NBT_QUERY_CACHE.clear();
         PENDING_NBT_REQUESTS.clear();
         LAST_REQUEST_TIME.clear();
@@ -342,6 +390,10 @@ public class RealContainerCache {
             if (halves != null) {
                 CACHE.remove(halves[0]);
                 CACHE.remove(halves[1]);
+                SYNC_SNAPSHOT_CACHE.remove(halves[0]);
+                SYNC_SNAPSHOT_CACHE.remove(halves[1]);
+                SYNC_SNAPSHOT_TIME.remove(halves[0]);
+                SYNC_SNAPSHOT_TIME.remove(halves[1]);
                 NBT_QUERY_CACHE.remove(halves[0]);
                 NBT_QUERY_CACHE.remove(halves[1]);
                 ServuxSyncHandler.INDEPENDENT_CACHE.remove(halves[0]);
@@ -352,9 +404,122 @@ public class RealContainerCache {
         }
 
         CACHE.remove(pos);
+        SYNC_SNAPSHOT_CACHE.remove(pos);
+        SYNC_SNAPSHOT_TIME.remove(pos);
         NBT_QUERY_CACHE.remove(pos);
         ServuxSyncHandler.INDEPENDENT_CACHE.remove(pos);
         LAST_REQUEST_TIME.remove(pos);
         cacheVersion++;
+    }
+
+    private static Map<Integer, ItemStack> getLitematicaSyncedItems(BlockPos pos) {
+        NbtCompound nbt = getLitematicaSyncedNbt(pos);
+        if (nbt == null) return null;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return null;
+
+        if (nbt.contains("disabled_slots") ||
+                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock) {
+            LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
+        }
+
+        return parseNbtInventory(nbt, client.world.getRegistryManager());
+    }
+
+    private static Map<Integer, ItemStack> getCombinedLitematicaSyncedItems(BlockPos rightPos, BlockPos leftPos) {
+        NbtCompound rightNbt = getLitematicaSyncedNbt(rightPos);
+        NbtCompound leftNbt = getLitematicaSyncedNbt(leftPos);
+        if (rightNbt == null || leftNbt == null) return null;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return null;
+
+        Map<Integer, ItemStack> right = parseInventoryAndLocks(rightPos, rightNbt, client);
+        Map<Integer, ItemStack> left = parseInventoryAndLocks(leftPos, leftNbt, client);
+        return combineHalves(right, left);
+    }
+
+    private static NbtCompound getLitematicaSyncedNbt(BlockPos pos) {
+        try {
+            return EntitiesDataStorage.getInstance().getFromBlockEntityCacheNbt(pos);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Map<Integer, ItemStack> parseInventoryAndLocks(BlockPos pos, NbtCompound nbt, MinecraftClient client) {
+        if (nbt.contains("disabled_slots") ||
+                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock) {
+            LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
+        }
+
+        return parseNbtInventory(nbt, client.world.getRegistryManager());
+    }
+
+    private static Map<Integer, ItemStack> combineHalves(Map<Integer, ItemStack> right, Map<Integer, ItemStack> left) {
+        if (right == null || left == null) return null;
+
+        Map<Integer, ItemStack> combined = new HashMap<>();
+        combined.putAll(right);
+        left.forEach((k, v) -> combined.put(k + 27, v));
+        return combined;
+    }
+
+    private static void rememberSyncedData(BlockPos pos, Map<Integer, ItemStack> items) {
+        SYNC_SNAPSHOT_CACHE.put(pos.toImmutable(), new HashMap<>(items));
+        SYNC_SNAPSHOT_TIME.put(pos.toImmutable(), System.currentTimeMillis());
+    }
+
+    private static void rememberSyncedData(BlockPos[] halves, Map<Integer, ItemStack> items) {
+        Map<Integer, ItemStack> snapshot = new HashMap<>(items);
+        SYNC_SNAPSHOT_CACHE.put(halves[0].toImmutable(), snapshot);
+        SYNC_SNAPSHOT_CACHE.put(halves[1].toImmutable(), snapshot);
+        long now = System.currentTimeMillis();
+        SYNC_SNAPSHOT_TIME.put(halves[0].toImmutable(), now);
+        SYNC_SNAPSHOT_TIME.put(halves[1].toImmutable(), now);
+    }
+
+    private static Map<Integer, ItemStack> getSyncSnapshot(BlockPos pos) {
+        Long seenAt = SYNC_SNAPSHOT_TIME.get(pos);
+        if (seenAt == null) return null;
+
+        long age = System.currentTimeMillis() - seenAt;
+        if (age > SYNC_SNAPSHOT_TTL_MS || age < 0L) {
+            SYNC_SNAPSHOT_TIME.remove(pos);
+            SYNC_SNAPSHOT_CACHE.remove(pos);
+            return null;
+        }
+
+        return SYNC_SNAPSHOT_CACHE.get(pos);
+    }
+
+    private static boolean requestLitematicaData(BlockPos pos, BlockPos[] halves, boolean isDouble) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null || !isLitematicaSyncAvailable()) return false;
+
+        try {
+            EntitiesDataStorage storage = EntitiesDataStorage.getInstance();
+
+            if (isDouble) {
+                storage.requestBlockEntity(client.world, halves[0]);
+                storage.requestBlockEntity(client.world, halves[1]);
+            } else {
+                storage.requestBlockEntity(client.world, pos);
+            }
+
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isLitematicaSyncAvailable() {
+        try {
+            return fi.dy.masa.litematica.config.Configs.Generic.ENTITY_DATA_SYNC.getBooleanValue() ||
+                    fi.dy.masa.litematica.config.Configs.Generic.ENTITY_DATA_SYNC_BACKUP.getBooleanValue();
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 }
