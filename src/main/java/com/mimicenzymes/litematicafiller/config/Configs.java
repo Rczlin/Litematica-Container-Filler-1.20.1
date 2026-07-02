@@ -40,6 +40,7 @@ public class Configs implements IConfigHandler {
     private static final ConfigBoolean CONTINUOUS_FILL              = new ConfigBoolean("litematica_container_filler.config.name.continuousFill", false, "litematica_container_filler.config.comment.continuousFill");
     private static final ConfigBoolean AREA_MODE                    = new ConfigBoolean("litematica_container_filler.config.name.areaMode", false, "litematica_container_filler.config.comment.areaMode");
     private static final ConfigBoolean LEGACY_ENABLE_CARPET_LARGE_BARRELS = new ConfigBoolean("litematica_container_filler.config.name.enableCarpetLargeBarrels", false, "litematica_container_filler.config.comment.enableCarpetLargeBarrels");
+    public static final ConfigBoolean DEBUG_MODE                    = new ConfigBoolean("litematica_container_filler.config.name.debugMode", false, "litematica_container_filler.config.comment.debugMode");
     public static final ConfigOptionList CARPET_LARGE_BARREL_MODE   = new ConfigOptionList("litematica_container_filler.config.name.carpetLargeBarrelMode", CarpetLargeBarrelMode.OFF, "litematica_container_filler.config.comment.carpetLargeBarrelMode");
     public static final ConfigInteger FILL_RADIUS                   = new ConfigInteger("litematica_container_filler.config.name.fillRadius", 5, 0, 1024, "litematica_container_filler.config.comment.fillRadius");
     public static final ConfigInteger FILL_DELAY                    = new ConfigInteger("litematica_container_filler.config.name.fillDelay", 0, 0, 100, "litematica_container_filler.config.comment.fillDelay");
@@ -151,7 +152,8 @@ public class Configs implements IConfigHandler {
                 ENABLE_SAFETY_DELAY,
                 ENABLE_FILL_STATE_PROTECTION,
                 CARPET_LARGE_BARREL_MODE,
-                MATERIAL_REPLACEMENTS
+                MATERIAL_REPLACEMENTS,
+                DEBUG_MODE
         );
 
         DATA_OPTIONS = ImmutableList.of(

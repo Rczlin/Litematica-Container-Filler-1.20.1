@@ -378,6 +378,8 @@
   "litematica_container_filler.config.option.containerFilterScope.both": "投影填充和工具",
   "litematica_container_filler.config.option.toolHudStyle.fixedCard": "固定信息卡片",
   "litematica_container_filler.config.option.toolHudStyle.anchoredCard": "锚点指示卡片",
+  "litematica_container_filler.config.name.debugMode": "调试模式",
+  "litematica_container_filler.config.comment.debugMode": "开启后，在聊天框中打印填充过程每一步的详细耗时信息。",
   "litematica_container_filler.config.name.taskMarkerAnimationFps": "任务标记帧率上限",
   "litematica_container_filler.config.comment.taskMarkerAnimationFps": "正在填充、排队等待、缺少材料标记的最大动画重建帧率。0 表示不限制。",
   "litematica_container_filler.hud.fixed.title": "工具信息："

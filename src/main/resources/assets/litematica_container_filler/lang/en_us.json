@@ -376,6 +376,8 @@
   "litematica_container_filler.config.option.containerFilterScope.both": "Projection Fill + Tools",
   "litematica_container_filler.config.option.toolHudStyle.fixedCard": "Fixed Info Card",
   "litematica_container_filler.config.option.toolHudStyle.anchoredCard": "Anchored Card",
+  "litematica_container_filler.config.name.debugMode": "Debug Mode",
+  "litematica_container_filler.config.comment.debugMode": "When enabled, prints detailed timing information for each filling step to the chat.",
   "litematica_container_filler.config.name.taskMarkerAnimationFps": "Task Marker FPS Limit",
   "litematica_container_filler.config.comment.taskMarkerAnimationFps": "Maximum animation rebuild rate for filling, queued, and missing-material markers. 0 means unlimited.",
   "litematica_container_filler.hud.fixed.title": "Tool Info:",

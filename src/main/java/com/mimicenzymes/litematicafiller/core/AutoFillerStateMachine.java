@@ -139,6 +139,12 @@ public class AutoFillerStateMachine {
 
     private final IShulkerExtractor shulkerExtractor;
 
+    // Debug timing fields
+    private long debugTaskStartMs = 0;
+    private long debugPhaseStartMs = 0;
+    private int debugTaskCount = 0;
+    private int debugPhaseActionCount = 0;
+
     private record TakeItOutRequest(int shulkerSlot, int innerSlot, ItemStack requestedStack, int countBefore) {
     }
 
@@ -221,8 +227,36 @@ public class AutoFillerStateMachine {
     }
 
     private void changePhase(Phase newPhase) {
+        Phase oldPhase = this.currentPhase;
+        long now = System.currentTimeMillis();
+
+        if (Configs.DEBUG_MODE.getBooleanValue()) {
+            if (debugPhaseStartMs > 0 && oldPhase != Phase.IDLE) {
+                long phaseDuration = now - debugPhaseStartMs;
+                MinecraftClient client = MinecraftClient.getInstance();
+                if (client.player != null) {
+                    client.player.sendMessage(Text.literal(
+                        String.format("§8[§bCF Debug§8] §7Phase §e%s §7took §a%dms §7(%d actions)",
+                            oldPhase.name(), phaseDuration, debugPhaseActionCount)),
+                        false);
+                }
+            }
+        }
+
         this.currentPhase = newPhase;
         this.guiOpenedForPhase = false;
+        this.debugPhaseStartMs = now;
+        this.debugPhaseActionCount = 0;
+
+        if (Configs.DEBUG_MODE.getBooleanValue() && newPhase != Phase.IDLE) {
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client.player != null) {
+                client.player.sendMessage(Text.literal(
+                    String.format("§8[§bCF Debug§8] §7Entering phase §6%s",
+                        newPhase.name())),
+                    false);
+            }
+        }
     }
 
     private int getDelay(int baseTicks) {
@@ -471,6 +505,7 @@ public class AutoFillerStateMachine {
     }
 
     private boolean checkMaterialsAndPrepare(MinecraftClient client) {
+        long stepStartMs = Configs.DEBUG_MODE.getBooleanValue() ? System.currentTimeMillis() : 0;
         if (currentTask.missingItems.isEmpty()) return true;
 
         Map<Integer, ItemStack> trueData = getTrueContainerData(client, currentTask.targetPos);
@@ -589,11 +624,30 @@ public class AutoFillerStateMachine {
         }
 
         sendFeedback(client, Text.translatable("litematica_container_filler.message.task_dispatched").getString(), true);
+
+        // Debug: material check timing
+        if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0 && client.player != null) {
+            long stepMs = System.currentTimeMillis() - stepStartMs;
+            client.player.sendMessage(Text.literal(
+                String.format("§8[§bCF Debug§8] §7checkMaterialsAndPrepare took §a%dms", stepMs)),
+                false);
+        }
+
         return true;
     }
 
     private void abortTask(MinecraftClient client, String errorMsgKey, boolean isInventoryFull, boolean isLeaking) {
         aborting = true;
+
+        // Debug: print abort with timing
+        if (Configs.DEBUG_MODE.getBooleanValue() && currentTask != null && debugTaskStartMs > 0) {
+            long totalMs = System.currentTimeMillis() - debugTaskStartMs;
+            client.player.sendMessage(Text.literal(
+                String.format("§8[§bCF Debug§8] §c=== Task §a#%d §caborted at §e%s §c- total §a%dms §c(%s)",
+                    debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey)),
+                false);
+        }
+
         sendFeedback(client, Text.translatable(errorMsgKey).getString(), true);
         if (currentTask != null) {
             if (isLeaking) {
@@ -837,6 +891,18 @@ public class AutoFillerStateMachine {
                 movesThisTask = 0;
                 cursorStuckAttempts = 0;
 
+                // Debug: task start timing
+                if (Configs.DEBUG_MODE.getBooleanValue()) {
+                    debugTaskStartMs = System.currentTimeMillis();
+                    debugTaskCount++;
+                    if (client.player != null) {
+                        client.player.sendMessage(Text.literal(
+                            String.format("§8[§bCF Debug§8] §7=== Task §a#%d §7started at §e%s",
+                                debugTaskCount, currentTask.targetPos.toShortString())),
+                            false);
+                    }
+                }
+
                 if (currentTask.forcedManual) {
                     changePhase(Phase.INSPECTING);
                 } else if (currentTask.needsInspection) {
@@ -859,6 +925,7 @@ public class AutoFillerStateMachine {
             actionQueue.poll().run();
             if (!yieldTick) watchdogTimer = 0;
             actionsThisTick++;
+            if (Configs.DEBUG_MODE.getBooleanValue()) debugPhaseActionCount++;
             if (actionsThisTick >= MAX_ACTIONS_PER_TICK && !actionQueue.isEmpty() && actionWaitTicks <= 0 && !yieldTick) {
                 yieldTick = true;
             }
@@ -1799,6 +1866,7 @@ public class AutoFillerStateMachine {
     }
 
     private void executeBurstFill(MinecraftClient client, ScreenHandler handler) {
+        long stepStartMs = Configs.DEBUG_MODE.getBooleanValue() ? System.currentTimeMillis() : 0;
         int syncId = handler.syncId;
         int delay = Configs.ENABLE_SAFETY_DELAY.getBooleanValue() ? Configs.FILL_DELAY.getIntegerValue() : 0;
         boolean dropExtracted = Configs.DROP_EXTRACTED_ITEMS.getBooleanValue();
@@ -2106,10 +2174,31 @@ public class AutoFillerStateMachine {
                 finishTaskAndReturn(client);
             }
         }
+
+        // Debug: per-tick fill timing
+        if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
+            long stepMs = System.currentTimeMillis() - stepStartMs;
+            if (client.player != null) {
+                client.player.sendMessage(Text.literal(
+                    String.format("§8[§bCF Debug§8] §7Fill tick took §a%dms §7(moved=%s, needsAction=%s)",
+                        stepMs, movedAny, stillNeedsAction)),
+                    false);
+            }
+        }
     }
 
     private void finishTaskAndReturn(MinecraftClient client) {
         BlockPos completedPos = currentTask.targetPos.toImmutable();
+
+        // Debug: print total task time
+        if (Configs.DEBUG_MODE.getBooleanValue() && debugTaskStartMs > 0) {
+            long totalMs = System.currentTimeMillis() - debugTaskStartMs;
+            client.player.sendMessage(Text.literal(
+                String.format("§8[§bCF Debug§8] §7=== Task §a#%d §7completed at §e%s §7- total §a%dms",
+                    debugTaskCount, completedPos.toShortString(), totalMs)),
+                false);
+        }
+
         RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);
         failedContainers.remove(completedPos);
         missingMaterialMarkers.remove(completedPos);
