@@ -3,7 +3,7 @@ package com.mimicenzymes.litematicafiller.core;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.filter.ContainerBlockFilter;
 import com.mimicenzymes.litematicafiller.materials.FillMaterialCalculator;
-import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
+import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolStateMachine;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
 import net.minecraft.block.entity.BlockEntity;
@@ -542,6 +542,9 @@ public class RealContainerCache {
         return NBT_QUERY_CACHE.get(key);
     }
 
+    /** 请求新数据的最小间隔（缓存未命中时才触发请求） */
+    private static final long CACHE_MISS_REQUEST_INTERVAL = 10000L;
+
     public static Map<Integer, ItemStack> getCachedItems(BlockPos pos) {
         if (CACHE.containsKey(pos)) return CACHE.get(pos);
 
@@ -558,24 +561,24 @@ public class RealContainerCache {
                     return combined;
                 }
 
-                Map<Integer, ItemStack> rightServux = ServuxSyncHandler.getCachedData(halves[0]);
-                Map<Integer, ItemStack> leftServux = ServuxSyncHandler.getCachedData(halves[1]);
-                combined = combineHalves(rightServux, leftServux);
+                // 使用 PCA NBT 查询缓存
+                combined = combineHalves(NBT_QUERY_CACHE.get(halves[0]), NBT_QUERY_CACHE.get(halves[1]));
                 if (combined != null) {
                     if (isEntityInvalidated(halves[0]) || isEntityInvalidated(halves[1])) return null;
                     rememberSyncedData(halves, combined);
                     return combined;
                 }
 
-                combined = combineHalves(NBT_QUERY_CACHE.get(halves[0]), NBT_QUERY_CACHE.get(halves[1]));
-                if (combined != null) return combined;
-
+                // 返回快照但不触发请求（防止渲染循环高频触发网络请求）
                 Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
                 if (snapshot != null) {
-                    requestContainerData(pos);
                     return snapshot;
                 }
 
+                // 只在缓存缺失且距离上次请求间隔足够长时才请求
+                if (shouldRequestForCacheMiss(pos)) {
+                    requestContainerData(pos);
+                }
                 return null;
             }
         }
@@ -587,20 +590,36 @@ public class RealContainerCache {
             return litematicaData;
         }
 
-        Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(pos);
-        if (servuxData != null) {
+        // 使用 PCA NBT 查询缓存
+        Map<Integer, ItemStack> nbtData = NBT_QUERY_CACHE.get(pos);
+        if (nbtData != null) {
             if (isEntityInvalidated(pos)) return null;
-            rememberSyncedData(pos, servuxData);
-            return servuxData;
+            rememberSyncedData(pos, nbtData);
+            return nbtData;
         }
 
+        // 返回快照但不触发请求
         Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
         if (snapshot != null) {
-            requestContainerData(pos);
             return snapshot;
         }
 
+        // 只在缓存缺失且距离上次请求间隔足够长时才请求
+        if (shouldRequestForCacheMiss(pos)) {
+            requestContainerData(pos);
+        }
+
         return NBT_QUERY_CACHE.get(pos);
+    }
+
+    /**
+     * 判断是否应该因为缓存未命中而发起请求。
+     * 防止高频重复请求轰炸。
+     */
+    private static boolean shouldRequestForCacheMiss(BlockPos pos) {
+        long now = System.currentTimeMillis();
+        long lastReq = LAST_REQUEST_TIME.getOrDefault(pos, 0L);
+        return now - lastReq >= CACHE_MISS_REQUEST_INTERVAL;
     }
 
     public static void requestContainerData(BlockPos pos) {
@@ -611,9 +630,22 @@ public class RealContainerCache {
         requestContainerData(pos, minIntervalMs, false);
     }
 
+    /**
+     * PCA 协议的特殊请求间隔（比普通间隔更长，因为 PCA 是推送模式）。
+     * PCA 每个玩家只能关注一个位置，频繁发送无意义。
+     */
+    private static final long PCA_REQUEST_INTERVAL = 5000L;
+
     public static void requestContainerData(BlockPos pos, long minIntervalMs, boolean preferOpQuery) {
         long now = System.currentTimeMillis();
-        if (!hasActiveConsumers() || pos == null || now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < minIntervalMs) return;
+        if (!hasActiveConsumers() || pos == null) return;
+
+        // PCA 专有频率限制：更严格的间隔
+        // 同时检查该位置是否有缓存数据，如果有缓存则不需要频繁请求
+        boolean alreadyCached = hasFreshCache(pos);
+        long effectiveInterval = alreadyCached ? Math.max(minIntervalMs, PCA_REQUEST_INTERVAL) : minIntervalMs;
+
+        if (now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < effectiveInterval) return;
 
         boolean isDouble = false;
         BlockPos[] halves = null;
@@ -627,6 +659,12 @@ public class RealContainerCache {
             if (halves != null) isDouble = true;
         }
 
+        // 对于 PCA：先检查是否已经在关注中，如果已关注且缓存有数据则跳过
+        if (alreadyCached && isDouble && halves != null) {
+            boolean allCached = hasFreshCache(halves[0]) || hasFreshCache(halves[1]);
+            if (allCached) return;
+        }
+
         if (preferOpQuery && requestOpNbtData(pos, halves, isDouble, now)) {
             return;
         }
@@ -635,12 +673,26 @@ public class RealContainerCache {
 
         if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
             requested |= requestLitematicaData(pos, halves, isDouble);
-            if (isDouble) {
-                boolean s1 = ServuxSyncHandler.requestData(halves[0]);
-                boolean s2 = ServuxSyncHandler.requestData(halves[1]);
-                requested |= s1 || s2;
-            } else {
-                requested |= ServuxSyncHandler.requestData(pos);
+            // PCA 请求：仅在以下情况发送：
+            // 1. 这是主动填充任务的目标位置（而非扫描/渲染）
+            // 2. 该位置还没有缓存数据
+            // 3. 距离上次请求超过 5 秒
+            boolean isActiveFillTarget = AutoFillerStateMachine.getInstance().isWorking() &&
+                    AutoFillerStateMachine.getInstance().getCurrentTaskPos() != null &&
+                    (pos.equals(AutoFillerStateMachine.getInstance().getCurrentTaskPos()) ||
+                     (isDouble && halves != null && (pos.equals(halves[0]) || pos.equals(halves[1]))));
+            boolean needsPcaRequest = !alreadyCached || isActiveFillTarget;
+
+            if (needsPcaRequest) {
+                if (isDouble && halves != null) {
+                    requested |= PcaSyncHandler.requestBlockEntityData(halves[0]);
+                    if (PcaSyncHandler.isServerSupportsPca()) {
+                        // PCA 只支持关注一个位置，发送第二个请求会覆盖第一个
+                        // 所以只请求第一个半格，服务端会返回两个半格的数据（处理大箱子逻辑）
+                    }
+                } else {
+                    requested |= PcaSyncHandler.requestBlockEntityData(pos);
+                }
             }
         }
 
@@ -651,6 +703,23 @@ public class RealContainerCache {
         if (requestOpNbtData(pos, halves, isDouble, now)) {
             return;
         }
+    }
+
+    /**
+     * 检查该位置是否有新鲜的缓存数据。
+     */
+    private static boolean hasFreshCache(BlockPos pos) {
+        if (pos == null) return false;
+        BlockPos key = pos.toImmutable();
+        if (CACHE.containsKey(key) && CACHE_TIME.containsKey(key)) {
+            long age = System.currentTimeMillis() - CACHE_TIME.get(key);
+            if (age < CACHE_TTL_MS) return true;
+        }
+        if (NBT_QUERY_CACHE.containsKey(key) && CACHE_TIME.containsKey(key)) {
+            long age = System.currentTimeMillis() - CACHE_TIME.get(key);
+            if (age < CACHE_TTL_MS) return true;
+        }
+        return false;
     }
 
     private static void rememberRequestTime(BlockPos pos, BlockPos[] halves, long now) {
@@ -690,6 +759,52 @@ public class RealContainerCache {
         PENDING_NBT_REQUEST_TIME.put(id, now);
         client.getNetworkHandler().sendPacket(new net.minecraft.network.packet.c2s.play.QueryBlockNbtC2SPacket(id, pos));
         return true;
+    }
+
+    /**
+     * 处理 PCA 协议发来的方块实体数据更新。
+     * 由 PcaSyncHandler 在接收到 update_block_entity 包时调用。
+     */
+    public static void handlePcaBlockEntityUpdate(BlockPos pos, NbtCompound nbt) {
+        if (!hasActiveConsumers() || pos == null || nbt == null) return;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return;
+
+        boolean changed = false;
+        Map<Integer, ItemStack> items = parseNbtInventory(nbt);
+        NBT_QUERY_CACHE.put(pos.toImmutable(), items);
+        int inferredSlotCount = inferSlotCount(nbt, items);
+        rememberLargeBarrelIfObserved(client, pos, inferredSlotCount);
+        putSlotCount(pos, inferredSlotCount);
+        CACHE_TIME.put(pos.toImmutable(), System.currentTimeMillis());
+        rememberBlockEntityIdentity(pos, null);
+        changed = true;
+
+        if (nbt.contains("disabled_slots")) {
+            LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
+            changed = true;
+        }
+
+        BlockState state = client.world.getBlockState(pos);
+        BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, pos, state);
+        if (halves != null) {
+            Map<Integer, ItemStack> combined = combineHalves(NBT_QUERY_CACHE.get(halves[0]), NBT_QUERY_CACHE.get(halves[1]));
+            if (combined != null) {
+                changed |= putCachedItemsIfChanged(halves[0].toImmutable(), combined);
+                changed |= putCachedItemsIfChanged(halves[1].toImmutable(), combined);
+                changed |= putSlotCountIfChanged(halves[0], 54);
+                changed |= putSlotCountIfChanged(halves[1], 54);
+                rememberSyncedData(halves, combined);
+                rememberBlockEntityIdentity(pos, halves);
+            }
+        }
+
+        if (changed) {
+            cacheVersion++;
+            clearInvalidation(pos, halves);
+            markChanged(pos, halves);
+        }
     }
 
     public static void handleNbtResponse(int transactionId, NbtCompound nbt) {
@@ -877,7 +992,7 @@ public class RealContainerCache {
         PENDING_NBT_REQUEST_TIME.clear();
         LAST_REQUEST_TIME.clear();
         CONFIRMED_LARGE_BARREL_POSITIONS.clear();
-        ServuxSyncHandler.clearAllCachedData();
+        PcaSyncHandler.reset();
         cacheVersion++;
     }
 
@@ -1077,7 +1192,7 @@ public class RealContainerCache {
         SYNC_SNAPSHOT_TIME.remove(pos);
         NBT_QUERY_CACHE.remove(pos);
         CACHE_TIME.remove(pos);
-        ServuxSyncHandler.clearCachedData(pos);
+        // PCA 无独立缓存需清理，NBT_QUERY_CACHE 在上面已经清理了
         LAST_REQUEST_TIME.remove(pos);
     }
 
@@ -1122,7 +1237,6 @@ public class RealContainerCache {
             if (half == null) continue;
             BlockPos key = half.toImmutable();
             NBT_QUERY_CACHE.remove(key);
-            ServuxSyncHandler.clearCachedData(key);
         }
     }
 
@@ -1382,13 +1496,6 @@ public class RealContainerCache {
         if (slotCount != null) return slotCount;
 
         MinecraftClient client = MinecraftClient.getInstance();
-        int externalSlotCount = ServuxSyncHandler.getCachedSlotCount(pos);
-        if (externalSlotCount > 0) {
-            rememberLargeBarrelIfObserved(client, pos, externalSlotCount);
-            int best = Math.max(slotCount == null ? -1 : slotCount, externalSlotCount);
-            putSlotCount(pos, best);
-            return best;
-        }
 
         int realInventorySlotCount = getRealBlockInventorySlotCount(client, pos);
         if (realInventorySlotCount > 0) {
@@ -1409,16 +1516,6 @@ public class RealContainerCache {
 
         Map<Integer, ItemStack> cached = CACHE.get(pos);
         if (cached != null) return inferSlotCount(cached);
-
-        Map<Integer, ItemStack> servux = ServuxSyncHandler.getCachedData(pos);
-        if (servux != null) {
-            int inferred = Math.max(ServuxSyncHandler.getCachedSlotCount(pos), inferSlotCount(servux));
-            if (inferred > 0) {
-                rememberLargeBarrelIfObserved(client, pos, inferred);
-                putSlotCount(pos, inferred);
-                return inferred;
-            }
-        }
 
         Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
         if (snapshot != null) return inferSlotCount(snapshot);
