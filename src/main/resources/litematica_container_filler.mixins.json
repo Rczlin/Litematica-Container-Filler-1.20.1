@@ -2,7 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.mimicenzymes.litematicafiller.mixin",
-  "compatibilityLevel": "JAVA_21",
+  "compatibilityLevel": "JAVA_17",
   "mixins": [],
   "client": [
     "ClientCommonNetworkHandlerMixin",
@@ -19,7 +19,6 @@
     "MaterialListBaseMixin",
     "BlockEntityMixin",
     "LootableContainerBlockEntityMixin",
-    "CrafterBlockEntityMixin",
     "SchematicPlacementMixin",
     "SchematicPlacementManagerMixin",
     "MaterialListPlacementAccessor"

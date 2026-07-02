@@ -25,9 +25,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.component.ComponentChanges;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -57,32 +54,36 @@ public class FillMaterialCalculator {
         public final Item item;
         public final String customName;
         public final int containerHash;
-        public final ComponentChanges componentChanges;
+        public final net.minecraft.nbt.NbtCompound nbt;
 
         public ItemStackKey(ItemStack stack) {
             this.item = stack.getItem();
-            net.minecraft.text.Text name = stack.get(DataComponentTypes.CUSTOM_NAME);
+            net.minecraft.text.Text name = stack.getName();
             this.customName = name != null ? name.getString() : "";
             this.containerHash = computeContainerHash(stack);
-            this.componentChanges = stack.getComponentChanges();
+            this.nbt = stack.getOrCreateNbt();
         }
 
         private static int computeContainerHash(ItemStack stack) {
-            if (!(stack.getItem() instanceof BlockItem blockItem) ||
-                !(blockItem.getBlock() instanceof ShulkerBoxBlock)) {
+            if (!(stack.getItem() instanceof BlockItem) ||
+                !(((BlockItem) stack.getItem()).getBlock() instanceof ShulkerBoxBlock)) {
                 return 0;
             }
 
-            ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
-            if (container == null) return 0;
+            NbtCompound blockEntityTag = stack.getOrCreateSubNbt("BlockEntityTag");
+            if (blockEntityTag == null || !blockEntityTag.contains("Items")) return 0;
 
+            net.minecraft.nbt.NbtList itemsList = blockEntityTag.getList("Items", 10);
             int hash = 0;
             int slot = 0;
-            for (ItemStack contained : container.iterateNonEmpty()) {
+            for (int i = 0; i < itemsList.size(); i++) {
+                NbtCompound itemTag = itemsList.getCompound(i);
+                ItemStack contained = ItemStack.fromNbt(itemTag);
+                if (contained.isEmpty()) continue;
                 hash = 31 * hash + Registries.ITEM.getId(contained.getItem()).hashCode();
                 hash = 31 * hash + contained.getCount();
                 hash = 31 * hash + slot;
-                net.minecraft.text.Text cName = contained.get(DataComponentTypes.CUSTOM_NAME);
+                net.minecraft.text.Text cName = contained.getName();
                 if (cName != null) hash = 31 * hash + cName.getString().hashCode();
                 slot++;
             }
@@ -97,14 +98,14 @@ public class FillMaterialCalculator {
             return item.equals(that.item)
                     && customName.equals(that.customName)
                     && containerHash == that.containerHash
-                    && componentChanges.equals(that.componentChanges);
+                    && java.util.Objects.equals(nbt, that.nbt);
         }
 
         @Override
         public int hashCode() {
             int result = 31 * item.hashCode() + customName.hashCode();
             result = 31 * result + containerHash;
-            return 31 * result + componentChanges.hashCode();
+            return 31 * result + nbt.hashCode();
         }
     }
 
@@ -335,10 +336,10 @@ public class FillMaterialCalculator {
                                     if (state != null && state.hasBlockEntity()) {
                                         BlockEntity be = schematicWorld.getBlockEntity(worldPos);
                                         if (be != null) {
-                                            NbtCompound nbt = LitematicaContainerReader.createRawNbt(be, client.world.getRegistryManager());
+                                            NbtCompound nbt = LitematicaContainerReader.createRawNbt(be);
                                             if (nbt != null && nbt.contains("Items")) {
                                                 ReplacementResult parsedReq = replaceInventoryMapWithOrigins(
-                                                        RealContainerCache.parseNbtInventory(nbt, client.world.getRegistryManager()),
+                                                        RealContainerCache.parseNbtInventory(nbt),
                                                         schematicKey);
 
                                                 NbtContext existing = bestMap.get(worldPos);
@@ -615,7 +616,7 @@ public class FillMaterialCalculator {
                     if (nbt == null || !nbt.contains("Items")) continue;
 
                     ReplacementResult parsed = replaceInventoryMapWithOrigins(
-                            RealContainerCache.parseNbtInventory(nbt, client.world.getRegistryManager()),
+                            RealContainerCache.parseNbtInventory(nbt),
                             SchematicMaterialReplacementContext.keyForSchematic(source.schematic));
                     if (parsed.items.isEmpty()) continue;
 
@@ -725,8 +726,8 @@ public class FillMaterialCalculator {
         for (MaterialListEntry entry : entries) {
             if (entry == null || entry.getStack().isEmpty()) continue;
 
-            ContainerComponent container = entry.getStack().get(DataComponentTypes.CONTAINER);
-            if (container == null) continue;
+            NbtCompound blockEntityTag = entry.getStack().getOrCreateSubNbt("BlockEntityTag");
+            if (blockEntityTag == null || !blockEntityTag.contains("Items")) continue;
 
             foundContainers = true;
 
@@ -735,7 +736,11 @@ public class FillMaterialCalculator {
             int availableMultiplier = Math.max(0, entry.getCountAvailable());
             int mismatchMultiplier = Math.max(0, entry.getCountMismatched());
 
-            for (ItemStack contained : container.iterateNonEmpty()) {
+            net.minecraft.nbt.NbtList itemsList = blockEntityTag.getList("Items", 10);
+            for (int idx = 0; idx < itemsList.size(); idx++) {
+                NbtCompound itemNbt = itemsList.getCompound(idx);
+                ItemStack contained = ItemStack.fromNbt(itemNbt);
+                if (contained.isEmpty()) continue;
                 if (contained.isEmpty()) continue;
 
                 ItemStack original = contained.copy();
@@ -832,7 +837,7 @@ public class FillMaterialCalculator {
 
         ItemStack origin = normalizeOrigin(original);
         ItemStack current = normalizeOrigin(displayed);
-        if (!ItemStack.areItemsAndComponentsEqual(origin, current)) {
+        if (!ItemStack.areEqual(origin, current)) {
             ItemStackKey key = new ItemStackKey(current);
             origins.put(key, origin);
             scopes.put(key, scope);

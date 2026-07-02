@@ -174,7 +174,8 @@ public abstract class GuiMaterialListMixin extends GuiBase implements MaterialLi
     private void mimic_injectViaApi() {
         if (!Configs.ENABLE_MOD.getBooleanValue()) return;
         try {
-            if (!(materialList instanceof IMaterialList iMatList)) return;
+            if (!(materialList instanceof IMaterialList)) return;
+            IMaterialList iMatList = (IMaterialList) materialList;
             FillMaterialCalculator.syncMaterialReplacementRules();
             mimic_seenReplacementVersion = FillMaterialCalculator.getMaterialReplacementVersion();
             if (mimic_cachedVanillaList == null) {

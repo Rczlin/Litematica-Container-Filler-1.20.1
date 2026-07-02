@@ -112,13 +112,8 @@ public class GuiContainerFilter extends GuiBase {
     }
 
     @Override
-    protected void drawScreenBackground(DrawContext drawContext, int mouseX, int mouseY) {
-        drawContext.fillGradient(0, 0, this.getScreenWidth(), this.getScreenHeight(), BACKGROUND_TOP, BACKGROUND_BOTTOM);
-        drawContext.fill(0, 0, this.getScreenWidth(), 68, APP_BAR);
-        drawContext.fill(0, 67, this.getScreenWidth(), 68, OUTLINE);
-        drawContext.fill(0, 68, this.getScreenWidth(), 100, 0x26000000);
-        FilterLayout layout = getFilterLayout();
-        drawCard(drawContext, layout.panelX, layout.panelY, layout.panelW, layout.panelH);
+    protected void drawScreenBackground(int mouseX, int mouseY) {
+        // Background drawing moved to drawContents in 1.20.1 (no DrawContext param here)
     }
 
     @Override
@@ -127,6 +122,13 @@ public class GuiContainerFilter extends GuiBase {
 
     @Override
     protected void drawContents(DrawContext drawContext, int mouseX, int mouseY, float partialTicks) {
+        drawContext.fillGradient(0, 0, this.width, this.height, BACKGROUND_TOP, BACKGROUND_BOTTOM);
+        drawContext.fill(0, 0, this.width, 68, APP_BAR);
+        drawContext.fill(0, 67, this.width, 68, OUTLINE);
+        drawContext.fill(0, 68, this.width, 100, 0x26000000);
+        FilterLayout layout = getFilterLayout();
+        drawCard(drawContext, layout.panelX, layout.panelY, layout.panelW, layout.panelH);
+
         int x = 16;
         int y = 18;
         super.drawContents(drawContext, mouseX, mouseY, partialTicks);
@@ -177,7 +179,7 @@ public class GuiContainerFilter extends GuiBase {
             if (id != null && Registries.BLOCK.containsId(id)) {
                 return Registries.BLOCK.get(id).getName().getString();
             }
-            return patterns.isEmpty() ? iconBlockId : patterns.getFirst();
+            return patterns.isEmpty() ? iconBlockId : patterns.get(0);
         }
 
         ItemStack getIconStack() {
@@ -223,8 +225,8 @@ public class GuiContainerFilter extends GuiBase {
     }
 
     private FilterLayout getFilterLayout() {
-        int screenW = this.getScreenWidth();
-        int screenH = this.getScreenHeight();
+        int screenW = this.width;
+        int screenH = this.height;
         int margin = clamp(screenW / 48, 10, 18);
         int panelX = margin;
         int panelY = screenH < 330 ? 70 : 74;
@@ -258,17 +260,17 @@ public class GuiContainerFilter extends GuiBase {
     }
 
     private FooterLayout getFooterLayout() {
-        int y = this.getScreenHeight() - 30;
-        int margin = clamp(this.getScreenWidth() / 48, 10, 16);
-        int gap = this.getScreenWidth() < 360 ? 5 : 8;
-        int defaultsW = this.getScreenWidth() < 360 ? 82 : 100;
-        int clearW = this.getScreenWidth() < 360 ? 64 : 80;
+        int y = this.height - 30;
+        int margin = clamp(this.width / 48, 10, 16);
+        int gap = this.width < 360 ? 5 : 8;
+        int defaultsW = this.width < 360 ? 82 : 100;
+        int clearW = this.width < 360 ? 64 : 80;
         int backW = 80;
         int leftX = margin;
         int clearX = leftX + defaultsW + gap;
-        int backX = this.getScreenWidth() - margin - backW;
+        int backX = this.width - margin - backW;
         if (clearX + clearW + gap > backX) {
-            backW = Math.max(56, (this.getScreenWidth() - margin * 2 - gap * 2) / 3);
+            backW = Math.max(56, (this.width - margin * 2 - gap * 2) / 3);
             defaultsW = backW;
             clearW = backW;
             leftX = margin;

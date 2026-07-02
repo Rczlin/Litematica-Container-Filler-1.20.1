@@ -1,40 +1,32 @@
 {
-    "schemaVersion":  1,
-    "id":  "litematica_container_filler",
-    "version": "0.10.2",
-    "name":  "Litematica Container Filler",
-    "description":  "Auto-fill containers from Litematica schematics with material lists, highlights, and configurable filling helpers.",
-    "authors":  [
-                    "MimicEnzymes"
-                ],
-    "contact":  {
-                    "homepage":  "https://modrinth.com/mod/litematica-container-filler",
-                    "sources":  "https://github.com/MimicEnzymes/Litematica-Container-Filler",
-                    "issues":  "https://github.com/MimicEnzymes/Litematica-Container-Filler/issues"
-                },
-    "license":  "LGPL-3.0-only",
-    "icon":  "assets/litematica_container_filler/icon.png",
-    "environment":  "client",
-    "entrypoints":  {
-                        "client":  [
-                                       "com.mimicenzymes.litematicafiller.LitematicaContainerFillerClient"
-                                   ],
-                        "modmenu":  [
-                                        "com.mimicenzymes.litematicafiller.config.ModMenuIntegration"
-                                    ]
-                    },
-    "mixins":  [
-                   "litematica_container_filler.mixins.json"
-               ],
-    "depends":  {
-                    "fabricloader":  "\u003e=0.15.11",
-                    "minecraft":  "~1.21.1",
-                    "java":  "\u003e=21",
-                    "malilib":  "*",
-                    "litematica":  "*"
-                },
-    "suggests":  {
-                     "quickshulker":  "*",
-                     "modmenu":  "*"
-                 }
+  "schemaVersion": 1,
+  "id": "litematica_container_filler",
+  "version": "0.10.2",
+  "name": "Litematica Container Filler",
+  "description": "Auto-fill containers from Litematica schematics with material lists, highlights, and configurable filling helpers.",
+  "authors": ["MimicEnzymes"],
+  "contact": {
+    "homepage": "https://modrinth.com/mod/litematica-container-filler",
+    "sources": "https://github.com/MimicEnzymes/Litematica-Container-Filler",
+    "issues": "https://github.com/MimicEnzymes/Litematica-Container-Filler/issues"
+  },
+  "license": "LGPL-3.0-only",
+  "icon": "assets/litematica_container_filler/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.mimicenzymes.litematicafiller.LitematicaContainerFillerClient"],
+    "modmenu": ["com.mimicenzymes.litematicafiller.config.ModMenuIntegration"]
+  },
+  "mixins": ["litematica_container_filler.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.20.1",
+    "java": ">=17",
+    "malilib": "*",
+    "litematica": "*"
+  },
+  "suggests": {
+    "quickshulker": "*",
+    "modmenu": "*"
+  }
 }

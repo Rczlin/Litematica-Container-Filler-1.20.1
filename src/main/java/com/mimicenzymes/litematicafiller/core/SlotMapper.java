@@ -20,7 +20,7 @@ public class SlotMapper {
             if (slot.inventory == playerInv) {
                 playerToUiMap.putIfAbsent(slot.getIndex(), uiSlotId);
             } else {
-                if (handler instanceof net.minecraft.screen.CrafterScreenHandler && slot.getIndex() == 9) {
+                if (false /* CrafterScreenHandler not in 1.20.1 */ && slot.getIndex() == 9) {
                     continue;
                 }
                 containerToUiMap.putIfAbsent(slot.getIndex(), uiSlotId);

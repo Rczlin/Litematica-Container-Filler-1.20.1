@@ -6,7 +6,6 @@ import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.c2s.play.ClickSlotC2SPacket;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
 import net.minecraft.network.packet.c2s.play.CreativeInventoryActionC2SPacket;
-import net.minecraft.network.packet.c2s.play.SlotChangedStateC2SPacket;
 
 import java.util.ArrayDeque;
 import java.util.Queue;
@@ -80,7 +79,6 @@ public class ClickPacketRateLimiter {
     private static boolean isContainerMutationPacket(Packet<?> packet) {
         return packet instanceof ClickSlotC2SPacket ||
                 packet instanceof CloseHandledScreenC2SPacket ||
-                packet instanceof SlotChangedStateC2SPacket ||
                 packet instanceof CreativeInventoryActionC2SPacket;
     }
 

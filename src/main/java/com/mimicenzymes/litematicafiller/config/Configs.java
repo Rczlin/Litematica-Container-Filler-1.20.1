@@ -352,9 +352,7 @@ public class Configs implements IConfigHandler {
         ConfigManager.getInstance().registerConfigHandler(Reference.MOD_ID, Configs.INSTANCE);
         InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
         InputEventHandler.getInputManager().registerKeyboardInputHandler(InputHandler.getInstance());
-        fi.dy.masa.malilib.registry.Registry.CONFIG_SCREEN.registerConfigScreenFactory(
-                new fi.dy.masa.malilib.util.data.ModInfo(Reference.MOD_ID, Reference.MOD_SHORT_NAME, GuiConfigs::new)
-        );
+        // malilib Registry.CONFIG_SCREEN not available in 1.20.1 malilib
     }
 
     public static void saveToFile() {

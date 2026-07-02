@@ -5,7 +5,6 @@ import net.minecraft.block.BarrelBlock;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.ChestBlock;
-import net.minecraft.block.CrafterBlock;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.registry.Registries;
@@ -38,8 +37,7 @@ public class ContainerBlockFilter {
         if (state == null || state.isAir()) return false;
         if (state.getBlock() instanceof ChestBlock ||
                 state.getBlock() instanceof BarrelBlock ||
-                state.getBlock() instanceof CrafterBlock ||
-                state.isOf(Blocks.HOPPER) ||
+                                state.isOf(Blocks.HOPPER) ||
                 state.isOf(Blocks.DISPENSER) ||
                 state.isOf(Blocks.DROPPER) ||
                 state.isOf(Blocks.FURNACE) ||

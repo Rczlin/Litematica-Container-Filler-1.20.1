@@ -1,24 +1,28 @@
 package com.mimicenzymes.litematicafiller.network;
 
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.codec.PacketCodecs;
-import net.minecraft.network.packet.CustomPayload;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 
-public record TakeItOutPayload(int slot, int shulker) implements CustomPayload {
-    public static final CustomPayload.Id<TakeItOutPayload> ID = new CustomPayload.Id<>(Identifier.of("takeitout", "getstack"));
+public class TakeItOutPayload {
+    public static final Identifier ID = new Identifier("takeitout", "getstack");
 
-    public static final PacketCodec<RegistryByteBuf, TakeItOutPayload> CODEC = PacketCodec.tuple(
-            PacketCodecs.INTEGER,
-            TakeItOutPayload::slot,
-            PacketCodecs.INTEGER,
-            TakeItOutPayload::shulker,
-            TakeItOutPayload::new
-    );
+    private final int slot;
+    private final int shulker;
 
-    @Override
-    public CustomPayload.Id<? extends CustomPayload> getId() {
-        return ID;
+    public TakeItOutPayload(int slot, int shulker) {
+        this.slot = slot;
+        this.shulker = shulker;
+    }
+
+    public int slot() { return slot; }
+    public int shulker() { return shulker; }
+
+    public static TakeItOutPayload read(PacketByteBuf buf) {
+        return new TakeItOutPayload(buf.readInt(), buf.readInt());
+    }
+
+    public static void write(TakeItOutPayload payload, PacketByteBuf buf) {
+        buf.writeInt(payload.slot());
+        buf.writeInt(payload.shulker());
     }
 }

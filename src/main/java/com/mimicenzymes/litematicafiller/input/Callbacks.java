@@ -145,8 +145,8 @@ public class Callbacks implements IHotkeyCallback {
                 return;
             }
 
-            Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(pos, mc.world.getRegistryManager());
-            boolean isCrafter = schWorld.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock;
+            Map<Integer, ItemStack> required = LitematicaContainerReader.getRequiredItems(pos);
+            boolean isCrafter = false; // CrafterBlock not in 1.20.1
 
             boolean needsLocking = isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, mc);
 

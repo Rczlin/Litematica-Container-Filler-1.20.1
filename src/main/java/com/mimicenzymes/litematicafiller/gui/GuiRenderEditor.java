@@ -284,8 +284,8 @@ public class GuiRenderEditor extends GuiBase {
         ColorControlLayout layout = getColorControlLayout(x, y, width);
         this.addButton(new ButtonGeneric(layout.swatchX, y, layout.swatchW, 20, ""), (button, mouseButton) -> openColorEditor(config));
         GuiTextFieldGeneric field = new GuiTextFieldGeneric(layout.valueX + 3, y + 2, Math.max(24, layout.valueW - 6), 16, this.textRenderer);
-        field.setTextWrapper(config.getStringValue());
-        field.setMaxLengthWrapper(10);
+        field.setText(config.getStringValue());
+        field.setMaxLength(10);
         field.setDrawsBackground(false);
         field.setTextPredicate(GuiRenderEditor::isPotentialColorInput);
         this.colorInputs.add(new ColorInputBinding(config, field));
@@ -310,11 +310,8 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     @Override
-    protected void drawScreenBackground(DrawContext drawContext, int mouseX, int mouseY) {
-        drawGradient(drawContext, 0, 0, this.getScreenWidth(), this.getScreenHeight(), BACKGROUND_TOP, BACKGROUND_BOTTOM);
-        drawContext.fill(0, 0, this.getScreenWidth(), 68, APP_BAR);
-        drawContext.fill(0, 67, this.getScreenWidth(), 68, OUTLINE);
-        drawContext.fill(0, 68, this.getScreenWidth(), 100, 0x26000000);
+    protected void drawScreenBackground(int mouseX, int mouseY) {
+        // Background drawing moved to drawContents in 1.20.1 (no DrawContext param here)
     }
 
     @Override
@@ -322,11 +319,36 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     @Override
+    protected void drawContents(DrawContext drawContext, int mouseX, int mouseY, float partialTicks) {
+        drawGradient(drawContext, 0, 0, this.width, this.height, BACKGROUND_TOP, BACKGROUND_BOTTOM);
+        drawContext.fill(0, 0, this.width, 68, APP_BAR);
+        drawContext.fill(0, 67, this.width, 68, OUTLINE);
+        drawContext.fill(0, 68, this.width, 100, 0x26000000);
+        updateDrag(mouseX, mouseY);
+        drawMaterialTitle(drawContext);
+        drawRenderWarningTopRight(drawContext);
+
+        EditorLayout layout = getEditorLayout();
+
+        drawCard(drawContext, layout.previewPanel.x, layout.previewPanel.y, layout.previewPanel.width, layout.previewPanel.height);
+        drawCard(drawContext, layout.controlsPanel.x, layout.controlsPanel.y, layout.controlsPanel.width, layout.controlsPanel.height);
+        drawSectionHeader(drawContext, tr("litematica_container_filler.gui.label.render_editor_preview"), layout.previewPanel.x + 16, layout.previewPanel.y + 12);
+        drawSectionHeader(drawContext, tr("litematica_container_filler.gui.label.render_editor_settings"), layout.controlsPanel.x + 16, layout.controlsPanel.y + 12);
+        drawTabDescription(drawContext, layout.controlsPanel.x + 16, layout.controlsPanel.y + 31, layout.controlsPanel.width - 32);
+        drawPreview(drawContext, layout.preview.x, layout.preview.y, layout.preview.width, layout.preview.height, partialTicks);
+        super.drawContents(drawContext, mouseX, mouseY, partialTicks);
+        drawTabButtonOverlay(drawContext, mouseX, mouseY);
+        drawBackButtonOverlay(drawContext, mouseX, mouseY);
+        drawTabControlsOverlay(drawContext, mouseX, mouseY);
+    }
+
+    @Override
     public boolean onMouseClicked(int mouseX, int mouseY, int mouseButton) {
         if (handleColorInputClick(mouseX, mouseY, mouseButton)) {
             return true;
         }
-        if (mouseButton == 0 && handleChromeClick(mouseX, mouseY)) {
+
+        if (handleChromeClick(mouseX, mouseY)) {
             return true;
         }
 
@@ -359,7 +381,7 @@ public class GuiRenderEditor extends GuiBase {
                 return true;
             }
 
-            if (focused.field.keyPressedWrapper(keyCode, scanCode, modifiers)) {
+            if (focused.field.keyPressed(keyCode, scanCode, modifiers)) {
                 applyColorInput(focused);
                 return true;
             }
@@ -370,7 +392,7 @@ public class GuiRenderEditor extends GuiBase {
     @Override
     public boolean onCharTyped(char chr, int modifiers) {
         ColorInputBinding focused = getFocusedColorInput();
-        if (focused != null && focused.field.charTypedWrapper(chr, modifiers)) {
+        if (focused != null && focused.field.charTyped(chr, modifiers)) {
             applyColorInput(focused);
             return true;
         }
@@ -386,26 +408,6 @@ public class GuiRenderEditor extends GuiBase {
             return true;
         }
         return super.onMouseReleased(mouseX, mouseY, mouseButton);
-    }
-
-    @Override
-    protected void drawContents(DrawContext drawContext, int mouseX, int mouseY, float partialTicks) {
-        updateDrag(mouseX, mouseY);
-        drawMaterialTitle(drawContext);
-        drawRenderWarningTopRight(drawContext);
-
-        EditorLayout layout = getEditorLayout();
-
-        drawCard(drawContext, layout.previewPanel.x, layout.previewPanel.y, layout.previewPanel.width, layout.previewPanel.height);
-        drawCard(drawContext, layout.controlsPanel.x, layout.controlsPanel.y, layout.controlsPanel.width, layout.controlsPanel.height);
-        drawSectionHeader(drawContext, tr("litematica_container_filler.gui.label.render_editor_preview"), layout.previewPanel.x + 16, layout.previewPanel.y + 12);
-        drawSectionHeader(drawContext, tr("litematica_container_filler.gui.label.render_editor_settings"), layout.controlsPanel.x + 16, layout.controlsPanel.y + 12);
-        drawTabDescription(drawContext, layout.controlsPanel.x + 16, layout.controlsPanel.y + 31, layout.controlsPanel.width - 32);
-        drawPreview(drawContext, layout.preview.x, layout.preview.y, layout.preview.width, layout.preview.height, partialTicks);
-        super.drawContents(drawContext, mouseX, mouseY, partialTicks);
-        drawTabButtonOverlay(drawContext, mouseX, mouseY);
-        drawBackButtonOverlay(drawContext, mouseX, mouseY);
-        drawTabControlsOverlay(drawContext, mouseX, mouseY);
     }
 
     private void drawTabDescription(DrawContext context, int x, int y, int width) {
@@ -431,7 +433,7 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     private void drawRenderWarningTopRight(DrawContext context) {
-        int screenW = this.getScreenWidth();
+        int screenW = this.width;
         int width = Math.min(680, screenW - 520);
         if (width < 260) return;
 
@@ -480,8 +482,8 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     private void drawBackButtonOverlay(DrawContext context, int mouseX, int mouseY) {
-        int x = this.getScreenWidth() - 106;
-        int y = this.getScreenHeight() - 30;
+        int x = this.width - 106;
+        int y = this.height - 30;
         boolean hovered = mouseX >= x && mouseX < x + 80 && mouseY >= y && mouseY < y + 20;
         drawMaterialButton(context, x, y, 80, 20, tr("litematica_container_filler.gui.button.back"), hovered, true);
     }
@@ -500,8 +502,8 @@ public class GuiRenderEditor extends GuiBase {
             x += 90;
         }
 
-        int backX = this.getScreenWidth() - 106;
-        int backY = this.getScreenHeight() - 30;
+        int backX = this.width - 106;
+        int backY = this.height - 30;
         if (isPointInside(mouseX, mouseY, backX, backY, 80, 20)) {
             GuiBase.openGui(parent);
             return true;
@@ -513,8 +515,8 @@ public class GuiRenderEditor extends GuiBase {
     private boolean handleColorInputClick(double mouseX, double mouseY, int mouseButton) {
         boolean clickedInput = false;
         for (ColorInputBinding input : this.colorInputs) {
-            boolean handled = input.field.mouseClickedWrapper(mouseX, mouseY, mouseButton);
-            if (handled || input.field.isFocusedWrapper()) {
+            boolean handled = input.field.mouseClicked(mouseX, mouseY, mouseButton);
+            if (handled || input.field.isFocused()) {
                 clickedInput = true;
             } else {
                 finishColorInput(input, false);
@@ -525,7 +527,7 @@ public class GuiRenderEditor extends GuiBase {
 
     private ColorInputBinding getFocusedColorInput() {
         for (ColorInputBinding input : this.colorInputs) {
-            if (input.field.isFocusedWrapper()) {
+            if (input.field.isFocused()) {
                 return input;
             }
         }
@@ -542,7 +544,7 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     private void applyColorInput(ColorInputBinding input) {
-        String value = normalizeColorInput(input.field.getTextWrapper());
+        String value = normalizeColorInput(input.field.getText());
         if (!isCompleteColorInput(value)) {
             return;
         }
@@ -557,11 +559,11 @@ public class GuiRenderEditor extends GuiBase {
 
     private void finishColorInput(ColorInputBinding input, boolean clearFocus) {
         applyColorInput(input);
-        if (!isCompleteColorInput(normalizeColorInput(input.field.getTextWrapper()))) {
-            input.field.setTextWrapper(input.config.getStringValue());
+        if (!isCompleteColorInput(normalizeColorInput(input.field.getText()))) {
+            input.field.setText(input.config.getStringValue());
         }
         if (clearFocus) {
-            input.field.setFocusedWrapper(false);
+            input.field.setFocused(false);
         }
     }
 
@@ -653,11 +655,11 @@ public class GuiRenderEditor extends GuiBase {
         drawMaterialButton(context, layout.swatchX, y, layout.swatchW, 20, "", isHover(mouseX, mouseY, layout.swatchX, y, layout.swatchW, 20), false);
         drawRoundedRect(context, layout.swatchX + 5, y + 4, layout.swatchW - 10, 12, 4, color);
         ColorInputBinding input = findColorInput(config);
-        boolean focused = input != null && input.field.isFocusedWrapper();
+        boolean focused = input != null && input.field.isFocused();
         boolean hovered = isHover(mouseX, mouseY, layout.valueX, y, layout.valueW, 20);
         drawMaterialButton(context, layout.valueX, y, layout.valueW, 20, "", hovered || focused, false);
         if (input != null) {
-            input.field.renderWrapper(context, mouseX, mouseY, 0.0f);
+            input.field.render(context, mouseX, mouseY, 0.0f);
         } else {
             drawString(context, fit(label, Math.max(12, layout.valueW / 6)), layout.valueX + 8, y + 6, TEXT);
         }
@@ -666,8 +668,8 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     private EditorLayout getEditorLayout() {
-        int screenW = this.getScreenWidth();
-        int screenH = this.getScreenHeight();
+        int screenW = this.width;
+        int screenH = this.height;
         int top = screenH < 360 ? 72 : 82;
         int bottomReserve = screenH < 360 ? 34 : 42;
         int height = Math.max(96, screenH - top - bottomReserve);

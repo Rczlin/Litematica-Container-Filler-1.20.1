@@ -10,7 +10,6 @@ import fi.dy.masa.malilib.render.RenderUtils;
 import fi.dy.masa.malilib.util.StringUtils;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -102,7 +101,7 @@ public class GuiItemReplacementPicker extends GuiBase {
             ItemStack stack = currentTarget.get();
             if (!stack.isEmpty() && !stack.isOf(Items.AIR)) {
                 this.selectedItem = stack.getItem();
-                Text name = stack.get(DataComponentTypes.CUSTOM_NAME);
+                Text name = stack.getName();
                 if (name != null) this.targetName = name.getString();
             }
         }
@@ -124,8 +123,8 @@ public class GuiItemReplacementPicker extends GuiBase {
                 this.panelY = picker.getPanelY();
                 this.clampPanel();
             } else {
-                this.panelX = Math.max(4, (this.getScreenWidth() - this.panelWidth) >> 1);
-                this.panelY = Math.max(4, (this.getScreenHeight() - this.panelHeight) >> 1);
+                this.panelX = Math.max(4, (this.width - this.panelWidth) >> 1);
+                this.panelY = Math.max(4, (this.height - this.panelHeight) >> 1);
             }
         } else {
             this.clampPanel();
@@ -134,10 +133,10 @@ public class GuiItemReplacementPicker extends GuiBase {
         this.reflow();
 
         this.searchField = new GuiTextFieldGeneric(this.panelX + 14, this.panelY + SEARCH_Y, this.panelWidth - 28, 20, this.textRenderer);
-        this.searchField.setTextWrapper(this.searchText);
-        this.searchField.setMaxLengthWrapper(80);
+        this.searchField.setText(this.searchText);
+        this.searchField.setMaxLength(80);
         this.addTextField(this.searchField, field -> {
-            this.searchText = field.getTextWrapper();
+            this.searchText = field.getText();
             this.rowIndex = 0;
             this.refreshFilter();
             return true;
@@ -153,10 +152,10 @@ public class GuiItemReplacementPicker extends GuiBase {
         int applyX = cancelX - 6 - applyWidth;
         int nameFieldX = this.panelX + 58;
         this.nameField = new GuiTextFieldGeneric(nameFieldX, bottomY, Math.max(36, applyX - nameFieldX - 8), 20, this.textRenderer);
-        this.nameField.setTextWrapper(this.targetName);
-        this.nameField.setMaxLengthWrapper(64);
+        this.nameField.setText(this.targetName);
+        this.nameField.setMaxLength(64);
         this.addTextField(this.nameField, field -> {
-            this.targetName = field.getTextWrapper();
+            this.targetName = field.getText();
             return true;
         });
 
@@ -247,13 +246,13 @@ public class GuiItemReplacementPicker extends GuiBase {
     }
 
     @Override
-    public boolean onMouseScrolled(int mouseX, int mouseY, double horizontalAmount, double verticalAmount) {
+    public boolean onMouseScrolled(int mouseX, int mouseY, double verticalAmount) {
         if (this.isMouseOverPanel(mouseX, mouseY)) {
             this.scrollRows(verticalAmount < 0.0 ? 1 : -1);
             return true;
         }
 
-        return super.onMouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+        return super.onMouseScrolled(mouseX, mouseY, verticalAmount);
     }
 
     @Override
@@ -270,7 +269,7 @@ public class GuiItemReplacementPicker extends GuiBase {
         this.updateDrag(mouseX, mouseY);
         this.updateScrollAnimation();
         this.drawParent(drawContext, mouseX, mouseY, partialTicks);
-        RenderUtils.drawRect(0, 0, this.getScreenWidth(), this.getScreenHeight(), 0x66000000);
+        RenderUtils.drawRect(0, 0, this.width, this.height, 0x66000000);
 
         RenderUtils.drawOutlinedBox(this.panelX, this.panelY, this.panelWidth, this.panelHeight, 0xEF11151B, 0xFF98A7B8);
         RenderUtils.drawRect(this.panelX + 1, this.panelY + 1, this.panelWidth - 2, TITLE_HEIGHT, 0xAA1B2028);
@@ -289,8 +288,8 @@ public class GuiItemReplacementPicker extends GuiBase {
 
         this.drawWidgets(mouseX, mouseY, drawContext);
         this.drawButtons(mouseX, mouseY, partialTicks, drawContext);
-        this.searchField.renderWrapper(drawContext, mouseX, mouseY, partialTicks);
-        this.nameField.renderWrapper(drawContext, mouseX, mouseY, partialTicks);
+        this.searchField.render(drawContext, mouseX, mouseY, partialTicks);
+        this.nameField.render(drawContext, mouseX, mouseY, partialTicks);
 
         int hoveredIndex = this.getHoveredIndex(mouseX, mouseY);
         if (hoveredIndex >= 0) {
@@ -373,7 +372,7 @@ public class GuiItemReplacementPicker extends GuiBase {
         ItemStack target = new ItemStack(this.selectedItem);
         String rename = this.targetName == null ? "" : this.targetName.trim();
         if (!rename.isEmpty()) {
-            target.set(DataComponentTypes.CUSTOM_NAME, Text.literal(rename));
+            target.setCustomName(Text.literal(rename));
         }
 
         MaterialReplacementUi.addReplacementRule(this.source, target, this.scope, this.schematicKey);
@@ -567,8 +566,8 @@ public class GuiItemReplacementPicker extends GuiBase {
         this.reflow();
 
         if (this.searchField != null) {
-            this.searchField.setXWrapper(this.panelX + 14);
-            this.searchField.setYWrapper(this.panelY + SEARCH_Y);
+            this.searchField.setX(this.panelX + 14);
+            this.searchField.setY(this.panelY + SEARCH_Y);
         }
 
         int availableW = this.panelWidth - 28;
@@ -581,8 +580,8 @@ public class GuiItemReplacementPicker extends GuiBase {
         int bottomY = this.panelY + this.panelHeight - 35;
 
         if (this.nameField != null) {
-            this.nameField.setXWrapper(this.panelX + 58);
-            this.nameField.setYWrapper(this.panelY + this.panelHeight - 34);
+            this.nameField.setX(this.panelX + 58);
+            this.nameField.setY(this.panelY + this.panelHeight - 34);
         }
 
         if (this.applyButton != null) {
@@ -619,13 +618,13 @@ public class GuiItemReplacementPicker extends GuiBase {
 
     private void clampPanel() {
         this.updateDimensions();
-        this.panelX = MathHelper.clamp(this.panelX, 4, Math.max(4, this.getScreenWidth() - this.panelWidth - 4));
-        this.panelY = MathHelper.clamp(this.panelY, 4, Math.max(4, this.getScreenHeight() - this.panelHeight - 4));
+        this.panelX = MathHelper.clamp(this.panelX, 4, Math.max(4, this.width - this.panelWidth - 4));
+        this.panelY = MathHelper.clamp(this.panelY, 4, Math.max(4, this.height - this.panelHeight - 4));
     }
 
     private void updateDimensions() {
-        this.panelWidth = MathHelper.clamp(PREFERRED_PANEL_WIDTH, MIN_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, this.getScreenWidth() - 8));
-        this.panelHeight = MathHelper.clamp(PREFERRED_PANEL_HEIGHT, MIN_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, this.getScreenHeight() - 8));
+        this.panelWidth = MathHelper.clamp(PREFERRED_PANEL_WIDTH, MIN_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, this.width - 8));
+        this.panelHeight = MathHelper.clamp(PREFERRED_PANEL_HEIGHT, MIN_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, this.height - 8));
         this.gridColumns = MathHelper.clamp((this.panelWidth - GRID_SIDE_RESERVE) / CELL_SIZE, 4, MAX_GRID_COLUMNS);
         int availableGridHeight = Math.max(CELL_SIZE, this.panelHeight - GRID_TOP_OFFSET - GRID_BOTTOM_RESERVE);
         this.gridRows = MathHelper.clamp(availableGridHeight / CELL_SIZE, 1, MAX_GRID_ROWS);

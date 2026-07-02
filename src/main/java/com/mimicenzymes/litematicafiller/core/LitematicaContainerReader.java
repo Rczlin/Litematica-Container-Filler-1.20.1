@@ -10,7 +10,6 @@ import net.minecraft.block.enums.ChestType;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
 
@@ -96,7 +95,7 @@ public class LitematicaContainerReader {
         return facing.getDirection() == Direction.AxisDirection.NEGATIVE;
     }
 
-    public static Map<Integer, ItemStack> getRequiredItems(BlockPos worldPos, RegistryWrapper.WrapperLookup registries) {
+    public static Map<Integer, ItemStack> getRequiredItems(BlockPos worldPos) {
         Map<Integer, ItemStack> items = new HashMap<>();
         var schematicWorld = SchematicWorldHandler.getSchematicWorld();
         if (schematicWorld == null) return items;
@@ -107,12 +106,12 @@ public class LitematicaContainerReader {
         String schematicKey = findSchematicKeyForPosition(worldPos);
 
         if (halves != null) {
-            Map<Integer, ItemStack> rightHalf = getSingleContainerItems(schematicWorld, halves[0], registries);
-            Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, halves[1], registries);
+            Map<Integer, ItemStack> rightHalf = getSingleContainerItems(schematicWorld, halves[0]);
+            Map<Integer, ItemStack> leftHalf = getSingleContainerItems(schematicWorld, halves[1]);
             Map<Integer, ItemStack> combined = RealContainerCache.combineDoubleContainerItems(rightHalf, leftHalf);
             if (combined != null) items.putAll(combined);
         } else {
-            items.putAll(getSingleContainerItems(schematicWorld, worldPos, registries));
+            items.putAll(getSingleContainerItems(schematicWorld, worldPos));
         }
 
         MaterialReplacer.replaceInMap(items, schematicKey);
@@ -120,22 +119,22 @@ public class LitematicaContainerReader {
         return items;
     }
 
-    private static Map<Integer, ItemStack> getSingleContainerItems(net.minecraft.world.World schematicWorld, BlockPos pos, RegistryWrapper.WrapperLookup registries) {
+    private static Map<Integer, ItemStack> getSingleContainerItems(net.minecraft.world.World schematicWorld, BlockPos pos) {
         Map<Integer, ItemStack> items = new HashMap<>();
-        items.putAll(LitematicaPlacementContainerData.getItems(pos, registries));
+        items.putAll(LitematicaPlacementContainerData.getItems(pos));
         if (!items.isEmpty()) return items;
 
         BlockEntity blockEntity = schematicWorld.getBlockEntity(pos);
         if (blockEntity == null) return items;
 
-        NbtCompound nbt = createRawNbt(blockEntity, registries);
+        NbtCompound nbt = createRawNbt(blockEntity);
         if (nbt != null && nbt.contains("Items")) {
-            items.putAll(RealContainerCache.parseNbtInventory(nbt, registries));
+            items.putAll(RealContainerCache.parseNbtInventory(nbt));
         }
         return items;
     }
 
-    public static Set<Integer> getIgnoredSlots(BlockPos worldPos, RegistryWrapper.WrapperLookup registries) {
+    public static Set<Integer> getIgnoredSlots(BlockPos worldPos) {
         Set<Integer> ignoredSlots = new HashSet<>();
         var schematicWorld = SchematicWorldHandler.getSchematicWorld();
         if (schematicWorld == null) return ignoredSlots;
@@ -146,11 +145,11 @@ public class LitematicaContainerReader {
 
         if (halves != null) {
             Map<Integer, ItemStack> combined = RealContainerCache.combineDoubleContainerItems(
-                    getSingleContainerItems(schematicWorld, halves[0], registries),
-                    getSingleContainerItems(schematicWorld, halves[1], registries));
+                    getSingleContainerItems(schematicWorld, halves[0]),
+                    getSingleContainerItems(schematicWorld, halves[1]));
             collectIgnoredSlots(combined, ignoredSlots, schematicKey);
         } else {
-            collectIgnoredSlots(getSingleContainerItems(schematicWorld, worldPos, registries), ignoredSlots, schematicKey);
+            collectIgnoredSlots(getSingleContainerItems(schematicWorld, worldPos), ignoredSlots, schematicKey);
         }
 
         return ignoredSlots;
@@ -180,7 +179,7 @@ public class LitematicaContainerReader {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.world == null) return Collections.emptySet();
 
-        NbtCompound nbt = createRawNbt(blockEntity, client.world.getRegistryManager());
+        NbtCompound nbt = createRawNbt(blockEntity);
         return parseDisabledSlots(nbt);
     }
 
@@ -191,7 +190,7 @@ public class LitematicaContainerReader {
 
         BlockEntity realEntity = client.world.getBlockEntity(pos);
         if (realEntity == null) return true;
-        return !schematicLocks.equals(parseDisabledSlots(realEntity.createNbt(client.world.getRegistryManager())));
+        return !schematicLocks.equals(parseDisabledSlots(realEntity.createNbt()));
     }
 
     private static Set<Integer> parseDisabledSlots(NbtCompound nbt) {
@@ -215,7 +214,7 @@ public class LitematicaContainerReader {
         return disabledSlots;
     }
 
-    public static Map<Integer, ItemStack> getRequiredItemsFromNbt(net.minecraft.nbt.NbtCompound nbt, net.minecraft.registry.DynamicRegistryManager registryManager) {
+    public static Map<Integer, ItemStack> getRequiredItemsFromNbt(net.minecraft.nbt.NbtCompound nbt) {
         if (!nbt.contains("Items")) return null;
 
         net.minecraft.nbt.NbtElement rawList = nbt.get("Items");
@@ -238,14 +237,12 @@ public class LitematicaContainerReader {
             final int finalSlot = slot;
 
             try {
-                com.mojang.serialization.DataResult<net.minecraft.item.ItemStack> result =
-                        net.minecraft.item.ItemStack.OPTIONAL_CODEC.parse(registryManager.getOps(net.minecraft.nbt.NbtOps.INSTANCE), itemNbt);
-
-                result.result().ifPresent(stack -> {
+                try {
+                    net.minecraft.item.ItemStack stack = net.minecraft.item.ItemStack.fromNbt(itemNbt);
                     if (!stack.isEmpty()) {
                         items.put(finalSlot, stack);
                     }
-                });
+                } catch (Exception ignored) {}
             } catch (Exception ignored) {}
         }
 
@@ -254,12 +251,12 @@ public class LitematicaContainerReader {
         return items;
     }
 
-    public static NbtCompound createRawNbt(BlockEntity blockEntity, RegistryWrapper.WrapperLookup registries) {
+    public static NbtCompound createRawNbt(BlockEntity blockEntity) {
         if (blockEntity == null) return null;
 
         MaterialReplacer.pushNbtReplacementSuppression();
         try {
-            return blockEntity.createNbt(registries);
+            return blockEntity.createNbt();
         } finally {
             MaterialReplacer.popNbtReplacementSuppression();
         }

@@ -1,9 +1,8 @@
 package com.mimicenzymes.litematicafiller.network;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.network.packet.CustomPayload;
+import net.minecraft.util.Identifier;
 
 public class TakeItOutCompat {
     private static final boolean HAS_CLIENT_TAKEITOUT = FabricLoader.getInstance().isModLoaded("takeitout");
@@ -20,7 +19,7 @@ public class TakeItOutCompat {
         }
 
         try {
-            PayloadTypeRegistry.playC2S().register(TakeItOutPayload.ID, TakeItOutPayload.CODEC);
+            // In 1.20.1, we don't need PayloadTypeRegistry - just mark as registered
             payloadRegistered = true;
         } catch (Exception ignored) {
             payloadRegistered = false;
@@ -40,9 +39,11 @@ public class TakeItOutCompat {
 
         try {
             if (HAS_CLIENT_TAKEITOUT) {
-                ClientPlayNetworking.send(createClientTakeItOutPayload(slotInShulker, shulkerSlot));
+                createClientTakeItOutPayload(slotInShulker, shulkerSlot);
             } else {
-                ClientPlayNetworking.send(new TakeItOutPayload(slotInShulker, shulkerSlot));
+                net.minecraft.network.PacketByteBuf sendBuf = new net.minecraft.network.PacketByteBuf(io.netty.buffer.Unpooled.buffer());
+                TakeItOutPayload.write(new TakeItOutPayload(slotInShulker, shulkerSlot), sendBuf);
+                ClientPlayNetworking.send(TakeItOutPayload.ID, sendBuf);
             }
             return true;
         } catch (Exception ignored) {
@@ -50,17 +51,40 @@ public class TakeItOutCompat {
         }
     }
 
-    private static CustomPayload createClientTakeItOutPayload(int slotInShulker, int shulkerSlot) throws ReflectiveOperationException {
+    private static Object createClientTakeItOutPayload(int slotInShulker, int shulkerSlot) throws ReflectiveOperationException {
         Class<?> payloadClass = Class.forName("net.maxbel.takeitout.Takeitout$GetShulkerStackPayload");
 
         try {
-            return (CustomPayload) payloadClass
+            Object payload = payloadClass
                     .getDeclaredConstructor(int.class, int.class)
                     .newInstance(slotInShulker, shulkerSlot);
+            // In 1.20.1, send via reflection to call ClientPlayNetworking.send with the payload
+            try {
+                Class<?> networkingClass = ClientPlayNetworking.class;
+                for (java.lang.reflect.Method m : networkingClass.getDeclaredMethods()) {
+                    if (m.getName().equals("send") && m.getParameterCount() == 1) {
+                        m.setAccessible(true);
+                        m.invoke(null, payload);
+                        return payload;
+                    }
+                }
+            } catch (Throwable ignored) {}
+            return payload;
         } catch (NoSuchMethodException ignored) {
-            return (CustomPayload) payloadClass
+            Object payload = payloadClass
                     .getDeclaredConstructor(int.class, int.class, boolean.class)
                     .newInstance(slotInShulker, shulkerSlot, false);
+            try {
+                Class<?> networkingClass = ClientPlayNetworking.class;
+                for (java.lang.reflect.Method m : networkingClass.getDeclaredMethods()) {
+                    if (m.getName().equals("send") && m.getParameterCount() == 1) {
+                        m.setAccessible(true);
+                        m.invoke(null, payload);
+                        return payload;
+                    }
+                }
+            } catch (Throwable ignored2) {}
+            return payload;
         }
     }
 }

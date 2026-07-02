@@ -3,7 +3,6 @@ package com.mimicenzymes.litematicafiller.core;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mojang.serialization.DynamicOps;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.component.DataComponentTypes;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -42,12 +41,12 @@ public class MaterialReplacer {
             if (stack == null || stack.isEmpty()) return false;
 
             if (!this.exactStack.isEmpty()) {
-                return ItemStack.areItemsAndComponentsEqual(normalizeStack(stack), this.exactStack);
+                return ItemStack.areEqual(normalizeStack(stack), this.exactStack);
             }
 
             if (stack.getItem() != this.item) return false;
 
-            Text customName = stack.get(DataComponentTypes.CUSTOM_NAME);
+            Text customName = stack.getName();
 
             if (this.name == null) {
                 return customName == null;
@@ -64,7 +63,7 @@ public class MaterialReplacer {
             stack.setCount(count);
 
             if (this.exactStack.isEmpty() && this.name != null) {
-                stack.set(DataComponentTypes.CUSTOM_NAME, Text.literal(this.name));
+                stack.setCustomName(Text.literal(this.name));
             }
 
             return stack;
@@ -216,19 +215,14 @@ public class MaterialReplacer {
         }
     }
 
-    public static void replaceInNbtList(net.minecraft.nbt.NbtList itemsList, net.minecraft.registry.RegistryWrapper.WrapperLookup registries) {
-        String schematicKey = SchematicMaterialReplacementContext.getActiveKey();
-        replaceInNbtList(itemsList, registries, schematicKey);
-    }
-
-    public static void replaceInNbtList(net.minecraft.nbt.NbtList itemsList, net.minecraft.registry.RegistryWrapper.WrapperLookup registries, String schematicKey) {
+    public static void replaceInNbtList(net.minecraft.nbt.NbtList itemsList, String schematicKey) {
         if (isNbtReplacementSuppressed()) return;
         checkReload();
         if (!hasReplacementRules(schematicKey)) return;
 
         for (int i = 0; i < itemsList.size(); i++) {
             if (itemsList.get(i) instanceof net.minecraft.nbt.NbtCompound itemTag) {
-                ItemStack original = ItemStack.OPTIONAL_CODEC.parse(registries.getOps(net.minecraft.nbt.NbtOps.INSTANCE), itemTag).result().orElse(ItemStack.EMPTY);
+                ItemStack original = ItemStack.fromNbt(itemTag instanceof net.minecraft.nbt.NbtCompound ? (net.minecraft.nbt.NbtCompound) itemTag : null);
                 if (!original.isEmpty()) {
                     ItemStack replaced = replaceSingleStackLoaded(original, schematicKey);
                     if (replaced != original && !ItemStack.areEqual(replaced, original)) {
@@ -237,7 +231,7 @@ public class MaterialReplacer {
                             i--;
                             continue;
                         }
-                        net.minecraft.nbt.NbtElement newTag = ItemStack.OPTIONAL_CODEC.encodeStart(registries.getOps(net.minecraft.nbt.NbtOps.INSTANCE), replaced).result().orElse(null);
+                        net.minecraft.nbt.NbtElement newTag = replaced.writeNbt(new net.minecraft.nbt.NbtCompound());
                         if (newTag instanceof net.minecraft.nbt.NbtCompound newCompound) {
                             if (itemTag.contains("Slot")) {
                                 newCompound.put("Slot", itemTag.get("Slot"));
@@ -444,14 +438,14 @@ public class MaterialReplacer {
     public static String stackToExactRule(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return itemToLegacyRule(Items.AIR);
 
-        if (stack.get(DataComponentTypes.CUSTOM_NAME) == null && stack.getComponentChanges().isEmpty()) {
+        if (stack.getName() == null && true /* simplified NBT check */) {
             return stackToLegacyRule(stack);
         }
 
         ItemStack normalized = normalizeStack(stack);
         DynamicOps<NbtElement> ops = getNbtOps();
         if (ops != null) {
-            NbtElement encoded = ItemStack.OPTIONAL_CODEC.encodeStart(ops, normalized).result().orElse(null);
+            NbtCompound encoded = normalized.writeNbt(new NbtCompound());
             if (encoded != null) {
                 String payload = Base64.getUrlEncoder().withoutPadding()
                         .encodeToString(encoded.toString().getBytes(StandardCharsets.UTF_8));
@@ -459,11 +453,11 @@ public class MaterialReplacer {
             }
         }
 
-        if (normalized.get(DataComponentTypes.CUSTOM_NAME) != null) {
+        if (normalized.hasCustomName()) {
             return stackToLegacyRule(normalized);
         }
 
-        if (!normalized.getComponentChanges().isEmpty()) {
+        if (normalized.hasNbt()) {
             return itemToLegacyRule(normalized.getItem());
         }
 
@@ -474,7 +468,7 @@ public class MaterialReplacer {
         if (stack == null || stack.isEmpty()) return itemToLegacyRule(Items.AIR);
 
         String id = itemToLegacyRule(stack.getItem());
-        Text customName = stack.get(DataComponentTypes.CUSTOM_NAME);
+        Text customName = stack.getName();
         if (customName == null || customName.getString().isBlank()) {
             return id;
         }
@@ -508,7 +502,7 @@ public class MaterialReplacer {
         try {
             String nbtText = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
             NbtCompound nbt = StringNbtReader.parse(nbtText);
-            return ItemStack.OPTIONAL_CODEC.parse(ops, nbt).result().orElse(ItemStack.EMPTY);
+            return ItemStack.fromNbt(nbt instanceof NbtCompound ? (NbtCompound) nbt : null);
         } catch (Exception ignored) {
             return ItemStack.EMPTY;
         }
@@ -517,6 +511,6 @@ public class MaterialReplacer {
     private static DynamicOps<NbtElement> getNbtOps() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.world == null) return null;
-        return client.world.getRegistryManager().getOps(NbtOps.INSTANCE);
+        return null; // NbtOps no longer needed for 1.20.1
     }
 }

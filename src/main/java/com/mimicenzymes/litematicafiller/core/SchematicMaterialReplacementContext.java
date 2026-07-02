@@ -5,7 +5,6 @@ import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 
 import java.io.File;
 import java.nio.file.Path;
-import java.util.UUID;
 
 public final class SchematicMaterialReplacementContext {
     private static final ThreadLocal<String> ACTIVE_KEY = new ThreadLocal<>();
@@ -32,11 +31,7 @@ public final class SchematicMaterialReplacementContext {
     public static String keyForPlacement(SchematicPlacement placement) {
         if (placement == null) return null;
 
-        UUID hash = placement.getHashId();
-        if (hash != null) {
-            return "placement:" + hash;
-        }
-
+        // getHashId() not available in 1.20.1 litematica; use file + origin as key
         Path file = toPath(placement.getSchematicFile());
         if (file != null) {
             return "placement-file:" + file.toAbsolutePath().normalize() + "@" + placement.getOrigin();

@@ -62,7 +62,7 @@ public class AreaScanner {
 
         int maxTasks = passThroughScan ? 4 : (isSilentPrinter ? 15 : 40);
 
-        double reach = mc.player.getBlockInteractionRange();
+        double reach = mc.player.isCreative() ? 5.0 : 4.5;
         double reachSq = (reach + 0.5) * (reach + 0.5);
         Vec3d eyePos = mc.player.getEyePos();
         int interactionCandidateRadius = (int) Math.ceil(reach + 2.0);
@@ -185,7 +185,7 @@ public class AreaScanner {
         }
 
         Map<Integer, ItemStack> required = HighlightScanner.getCachedSchematicRequirement(taskPos, mc);
-        boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
+        boolean isCrafter = false; // CrafterBlock not in 1.20.1
         boolean needsLocking = isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(taskPos, mc);
         boolean manualNeedsFill = ManualContainerOverrideManager.isNeedsFill(taskPos);
         boolean hasItems = required != null && !required.isEmpty() && (manualNeedsFill || !RealContainerCache.isSatisfied(taskPos, required));

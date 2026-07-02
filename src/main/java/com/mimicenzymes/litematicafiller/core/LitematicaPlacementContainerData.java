@@ -12,7 +12,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.Collections;
@@ -41,13 +40,13 @@ public class LitematicaPlacementContainerData {
         return nbt == null ? Optional.empty() : Optional.of(nbt);
     }
 
-    public static Map<Integer, ItemStack> getItems(BlockPos worldPos, RegistryWrapper.WrapperLookup registries) {
+    public static Map<Integer, ItemStack> getItems(BlockPos worldPos) {
         Optional<NbtCompound> nbt = getNbt(worldPos);
         if (nbt.isEmpty() || !nbt.get().contains("Items")) {
             return Collections.emptyMap();
         }
 
-        return RealContainerCache.parseNbtInventory(nbt.get(), registries);
+        return RealContainerCache.parseNbtInventory(nbt.get());
     }
 
     public static String getSchematicKey(BlockPos worldPos) {
@@ -99,7 +98,9 @@ public class LitematicaPlacementContainerData {
                     }
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
+            System.err.println("[LitematicaFiller] buildSnapshot failed: " + t);
+            t.printStackTrace();
         }
 
         return new Snapshot(
@@ -136,7 +137,7 @@ public class LitematicaPlacementContainerData {
             BlockPos regionPosTransformed = PositionUtils.getTransformedBlockPos(regionPos, placement.getMirror(), placement.getRotation());
             BlockPos transformedLocal = PositionUtils.getTransformedPlacementPosition(posWithinSubRegion, placement, regionPlacement);
             return placement.getOrigin().add(regionPosTransformed).add(transformedLocal);
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
             return null;
         }
     }
@@ -158,7 +159,7 @@ public class LitematicaPlacementContainerData {
                     container
             );
             return localPos.equals(mappedLocalPos);
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
             return false;
         }
     }
@@ -173,14 +174,13 @@ public class LitematicaPlacementContainerData {
                 var blockEntity = net.minecraft.block.entity.BlockEntity.createFromNbt(
                         localPos,
                         state,
-                        nbt,
-                        client.world.getRegistryManager()
+                        nbt
                 );
                 return blockEntity instanceof net.minecraft.inventory.Inventory || nbt.contains("Items");
-            } catch (Exception ignored) {
+            } catch (Throwable t) {
                 return nbt.contains("Items");
             }
-        } catch (Exception ignored) {
+        } catch (Throwable t) {
             return false;
         }
     }

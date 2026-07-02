@@ -80,12 +80,13 @@ public abstract class MaterialListBaseMixin {
             }
 
             return this.stack.getItem() == other.stack.getItem() &&
-                   Objects.equals(this.stack.getComponents(), other.stack.getComponents());
+                   Objects.equals(this.stack.getNbt(), other.stack.getNbt());
         }
 
         @Override
         public int hashCode() {
-            return 31 * this.stack.getItem().hashCode() + this.stack.getComponents().hashCode();
+            int nbtHash = this.stack.hasNbt() ? this.stack.getNbt().hashCode() : 0;
+            return 31 * this.stack.getItem().hashCode() + nbtHash;
         }
     }
 }

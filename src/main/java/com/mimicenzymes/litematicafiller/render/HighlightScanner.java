@@ -49,6 +49,7 @@ public class HighlightScanner {
     private static final int MAX_DIRTY_HIGHLIGHT_UPDATES_PER_TICK = 64;
     private static volatile int highlightVersion = 0;
     private static HighlightFingerprint highlightFingerprint = HighlightFingerprint.empty();
+    private static boolean highlightMapInitialized = false;
     private static final ExecutorService INDEX_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "LitematicaFiller-HighlightScanner");
         thread.setDaemon(true);
@@ -276,7 +277,7 @@ public class HighlightScanner {
     private static Map<Integer, ItemStack> getCachedSchematicReq(BlockPos pos, MinecraftClient client) {
         Map<Integer, ItemStack> req = SCHEMATIC_REQ_CACHE.get(pos);
         if (req == null) {
-            req = LitematicaContainerReader.getRequiredItems(pos, client.world.getRegistryManager());
+            req = LitematicaContainerReader.getRequiredItems(pos);
             if (req != null) {
                 SCHEMATIC_REQ_CACHE.put(pos, req);
             }
@@ -290,7 +291,7 @@ public class HighlightScanner {
 
     private static Set<Integer> getCachedIgnoredSlots(BlockPos pos, MinecraftClient client) {
         return SCHEMATIC_IGNORED_SLOT_CACHE.computeIfAbsent(pos.toImmutable(),
-                ignored -> LitematicaContainerReader.getIgnoredSlots(pos, client.world.getRegistryManager()));
+                ignored -> LitematicaContainerReader.getIgnoredSlots(pos));
     }
 
     public static void tick(MinecraftClient client) {
@@ -324,17 +325,19 @@ public class HighlightScanner {
 
         long now = System.currentTimeMillis();
         boolean modOperating = AutoFillerStateMachine.getInstance().isWorking() || ContainerToolStateMachine.getInstance().isWorking();
+        boolean fillWorkEnabled = Configs.WORKING_STATE.getBooleanValue();
         boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
+        boolean needsContainerData = modOperating || fillWorkEnabled;
         LayerRange renderLayerRange = syncLayer ? fi.dy.masa.litematica.data.DataManager.getRenderLayerRange() : null;
         processDirtyHighlights(client, schematicWorld, renderLayerRange, now);
 
         boolean userHandledScreenOpen = client.currentScreen instanceof HandledScreen<?> && !modOperating;
         if (userHandledScreenOpen) {
-            pumpDataRequests(now);
+            if (needsContainerData) pumpDataRequests(now);
             return;
         }
 
-        pumpDataRequests(now);
+        if (needsContainerData) pumpDataRequests(now);
 
         startIndexingIfIdle(now);
 
@@ -344,7 +347,6 @@ public class HighlightScanner {
             triggerBoost(BOOST_DURATION_TICKS);
         }
 
-        boolean fillWorkEnabled = Configs.WORKING_STATE.getBooleanValue();
         int updateInterval = boostedTicks > 0
                 ? BOOSTED_UPDATE_INTERVAL_TICKS
                 : (modOperating || fillWorkEnabled ? NORMAL_UPDATE_INTERVAL_TICKS : IDLE_UPDATE_INTERVAL_TICKS);
@@ -484,7 +486,7 @@ public class HighlightScanner {
         queueLargeBarrelConfirmationIfNeeded(client, schematicWorld, checkPos, state, now);
 
         Map<Integer, ItemStack> required = getCachedSchematicReq(checkPos, client);
-        boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
+        boolean isCrafter = false /* CrafterBlock not in 1.20.1 */;
         boolean crafterNeedsLocking = false;
 
         boolean hasRequiredItems = required != null && !required.isEmpty();
@@ -663,19 +665,19 @@ public class HighlightScanner {
 
         HIGHLIGHT_MAP.clear();
         highlightFingerprint = HighlightFingerprint.empty();
+        highlightMapInitialized = false;
         highlightVersion++;
     }
 
     private static void replaceHighlightsIfChanged(HighlightBuild nextHighlights) {
         HighlightFingerprint nextFingerprint = nextHighlights.fingerprint();
-        if (highlightFingerprint.equals(nextFingerprint)) {
-            return;
+        if (!highlightMapInitialized || !highlightFingerprint.equals(nextFingerprint)) {
+            HIGHLIGHT_MAP.clear();
+            HIGHLIGHT_MAP.putAll(nextHighlights.states);
+            highlightFingerprint = nextFingerprint;
+            highlightMapInitialized = true;
+            highlightVersion++;
         }
-
-        HIGHLIGHT_MAP.clear();
-        HIGHLIGHT_MAP.putAll(nextHighlights.states);
-        highlightFingerprint = nextFingerprint;
-        highlightVersion++;
     }
 
     private static HighlightFingerprint computeHighlightFingerprint(Map<BlockPos, HighlightState> highlights) {

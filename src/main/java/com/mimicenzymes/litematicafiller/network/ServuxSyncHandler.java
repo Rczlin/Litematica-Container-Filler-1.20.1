@@ -1,7 +1,8 @@
 package com.mimicenzymes.litematicafiller.network;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
+import net.minecraft.network.PacketByteBuf;
+import net.minecraft.util.Identifier;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
 
@@ -32,11 +33,9 @@ public class ServuxSyncHandler {
     public static void registerPayloads() {
         if (payloadsRegistered) return;
         try {
-            PayloadTypeRegistry.playC2S().register(ServuxRequestPayload.ID, ServuxRequestPayload.CODEC);
-            PayloadTypeRegistry.playS2C().register(ServuxResponsePayload.ID, ServuxResponsePayload.CODEC);
-
-            ClientPlayNetworking.registerGlobalReceiver(ServuxResponsePayload.ID, (payload, context) -> {
-                context.client().execute(() -> {
+            ClientPlayNetworking.registerGlobalReceiver(ServuxResponsePayload.ID, (client, handler, buf, responseSender) -> {
+                ServuxResponsePayload payload = ServuxResponsePayload.read(buf);
+                client.execute(() -> {
                     if (payload.pos() != null && payload.items() != null) {
                         putIndependentCache(payload.pos().toImmutable(), payload.items());
                     }
@@ -247,7 +246,9 @@ public class ServuxSyncHandler {
         }
 
         if (payloadsRegistered && ClientPlayNetworking.canSend(ServuxRequestPayload.ID)) {
-            ClientPlayNetworking.send(new ServuxRequestPayload(0, pos));
+            net.minecraft.network.PacketByteBuf sendBuf = new net.minecraft.network.PacketByteBuf(io.netty.buffer.Unpooled.buffer());
+            ServuxRequestPayload.write(new ServuxRequestPayload(0, pos), sendBuf);
+            ClientPlayNetworking.send(ServuxRequestPayload.ID, sendBuf);
             return true;
         }
 

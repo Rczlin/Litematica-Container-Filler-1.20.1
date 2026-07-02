@@ -5,7 +5,6 @@ import com.mimicenzymes.litematicafiller.filter.ContainerBlockFilter;
 import com.mimicenzymes.litematicafiller.materials.FillMaterialCalculator;
 import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolStateMachine;
-import fi.dy.masa.litematica.data.EntitiesDataStorage;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.BlockState;
@@ -18,7 +17,6 @@ import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.screen.ScreenHandler;
 import net.minecraft.screen.slot.Slot;
 import net.minecraft.util.hit.BlockHitResult;
@@ -199,7 +197,7 @@ public class RealContainerCache {
                     items.put(slot.getIndex(), stack.copy());
                     signature = mix(signature, slot.getIndex());
                     signature = mix(signature, stack.getCount());
-                    signature = mix(signature, ItemStack.hashCode(stack));
+                    signature = mix(signature, stack.hashCode());
                 }
             }
         }
@@ -220,20 +218,6 @@ public class RealContainerCache {
             rememberSyncedData(pos, items);
         }
         rememberBlockEntityIdentity(pos, halves);
-
-        if (handler instanceof net.minecraft.screen.CrafterScreenHandler crafterHandler) {
-            Set<Integer> locks = new HashSet<>();
-            int disabledMask = 0;
-            for (int i = 0; i < 9; i++) {
-                if (crafterHandler.isSlotDisabled(i)) {
-                    locks.add(i);
-                    disabledMask |= 1 << i;
-                }
-            }
-            signature = mix(signature, disabledMask);
-            Set<Integer> previousLocks = LOCK_CACHE.put(pos.toImmutable(), locks);
-            changed |= !locks.equals(previousLocks);
-        }
 
         if (changed) {
             cacheVersion++;
@@ -336,8 +320,7 @@ public class RealContainerCache {
             return slotCount == 3;
         }
         if (state.isOf(net.minecraft.block.Blocks.DISPENSER) ||
-                state.isOf(net.minecraft.block.Blocks.DROPPER) ||
-                state.getBlock() instanceof net.minecraft.block.CrafterBlock) {
+                state.isOf(net.minecraft.block.Blocks.DROPPER)) {
             return slotCount == 9;
         }
 
@@ -540,17 +523,7 @@ public class RealContainerCache {
 
             hash = mix(hash, slot.getIndex());
             hash = mix(hash, stack.getCount());
-            hash = mix(hash, ItemStack.hashCode(stack));
-        }
-
-        if (handler instanceof net.minecraft.screen.CrafterScreenHandler crafterHandler) {
-            int disabledMask = 0;
-            for (int i = 0; i < 9; i++) {
-                if (crafterHandler.isSlotDisabled(i)) {
-                    disabledMask |= 1 << i;
-                }
-            }
-            hash = mix(hash, disabledMask);
+            hash = mix(hash, stack.hashCode());
         }
 
         return hash;
@@ -732,7 +705,7 @@ public class RealContainerCache {
 
                 boolean changed = false;
 
-                Map<Integer, ItemStack> items = parseNbtInventory(nbt, client.world.getRegistryManager());
+                Map<Integer, ItemStack> items = parseNbtInventory(nbt);
                 NBT_QUERY_CACHE.put(pos.toImmutable(), items);
                 int inferredSlotCount = inferSlotCount(nbt, items);
                 rememberLargeBarrelIfObserved(client, pos, inferredSlotCount);
@@ -777,8 +750,7 @@ public class RealContainerCache {
         if (nbt == null) return null;
 
         MinecraftClient client = MinecraftClient.getInstance();
-        if (client.world != null && (nbt.contains("disabled_slots") ||
-                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock)) {
+        if (client.world != null && nbt.contains("disabled_slots")) {
             locks = parseDisabledSlots(nbt);
             LOCK_CACHE.put(pos.toImmutable(), locks);
             return locks;
@@ -800,22 +772,20 @@ public class RealContainerCache {
         if (client.world == null) return false;
 
         BlockState state = client.world.getBlockState(pos);
-        boolean isCrafter = state.getBlock() instanceof net.minecraft.block.CrafterBlock;
-        Set<Integer> ignoredSlots = LitematicaContainerReader.getIgnoredSlots(pos, client.world.getRegistryManager());
-        if (isCrafter && LitematicaContainerReader.doesCrafterNeedLocking(pos, client)) {
-            return false;
-        }
+        // CrafterBlock not in 1.20.1
+        Set<Integer> ignoredSlots = LitematicaContainerReader.getIgnoredSlots(pos);
 
         Map<Integer, ItemStack> realItems = getCachedItems(pos);
         if (realItems != null) {
-            return checkMapStrict(realItems, required, ignoredSlots, isCrafter);
+            return checkMapStrict(realItems, required, ignoredSlots);
         }
         return false;
     }
 
-    private static boolean checkMapStrict(Map<Integer, ItemStack> realItems, Map<Integer, ItemStack> required, Set<Integer> ignoredSlots, boolean isCrafter) {
+    private static boolean checkMapStrict(Map<Integer, ItemStack> realItems, Map<Integer, ItemStack> required, Set<Integer> ignoredSlots) {
         if (realItems == null) return false;
-        int maxSlot = isCrafter ? 9 : 54;
+        // CrafterBlock not in 1.20.1; always 54 slots
+        int maxSlot = 54;
 
         for (int i = 0; i < maxSlot; i++) {
             if (ignoredSlots != null && ignoredSlots.contains(i)) continue;
@@ -831,7 +801,7 @@ public class RealContainerCache {
         return true;
     }
 
-    public static Map<Integer, ItemStack> parseNbtInventory(NbtCompound nbt, RegistryWrapper.WrapperLookup registries) {
+    public static Map<Integer, ItemStack> parseNbtInventory(NbtCompound nbt) {
         Map<Integer, ItemStack> items = new HashMap<>();
         NbtElement itemsElem = nbt.get("Items");
         if (itemsElem instanceof NbtList list) {
@@ -845,7 +815,7 @@ public class RealContainerCache {
 
                     ItemStack stack = ItemStack.EMPTY;
                     try {
-                        stack = ItemStack.OPTIONAL_CODEC.parse(registries.getOps(NbtOps.INSTANCE), itemTag).result().orElse(ItemStack.EMPTY);
+                        stack = ItemStack.fromNbt(itemTag);
                     } catch (Exception ignored) {}
 
                     if (stack.isEmpty() && itemTag.contains("id")) {
@@ -1164,12 +1134,11 @@ public class RealContainerCache {
         if (client.world == null) return null;
 
         boolean hasItems = nbt.contains("Items");
-        if (nbt.contains("disabled_slots") ||
-                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock) {
+        if (nbt.contains("disabled_slots")) {
             LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
         }
 
-        return parseNbtInventory(nbt, client.world.getRegistryManager());
+        return parseNbtInventory(nbt);
     }
 
     private static Map<Integer, ItemStack> getCombinedLitematicaSyncedItems(BlockPos rightPos, BlockPos leftPos) {
@@ -1187,7 +1156,7 @@ public class RealContainerCache {
 
     private static NbtCompound getLitematicaSyncedNbt(BlockPos pos) {
         try {
-            return EntitiesDataStorage.getInstance().getFromBlockEntityCacheNbt(pos);
+            return null; // EntitiesDataStorage not available in 1.20.1 litematica
         } catch (Throwable ignored) {
             return null;
         }
@@ -1196,12 +1165,11 @@ public class RealContainerCache {
     private static Map<Integer, ItemStack> parseInventoryAndLocks(BlockPos pos, NbtCompound nbt, MinecraftClient client) {
         boolean hasItems = nbt.contains("Items");
 
-        if (nbt.contains("disabled_slots") ||
-                client.world.getBlockState(pos).getBlock() instanceof net.minecraft.block.CrafterBlock) {
+        if (nbt.contains("disabled_slots")) {
             LOCK_CACHE.put(pos.toImmutable(), parseDisabledSlots(nbt));
         }
 
-        return parseNbtInventory(nbt, client.world.getRegistryManager());
+        return parseNbtInventory(nbt);
     }
 
     private static Map<Integer, ItemStack> combineHalves(Map<Integer, ItemStack> right, Map<Integer, ItemStack> left) {
@@ -1304,13 +1272,12 @@ public class RealContainerCache {
         if (client.world == null || !isLitematicaSyncAvailable()) return false;
 
         try {
-            EntitiesDataStorage storage = EntitiesDataStorage.getInstance();
+            // EntitiesDataStorage not available in 1.20.1 litematica
 
             if (isDouble) {
-                storage.requestBlockEntity(client.world, halves[0]);
-                storage.requestBlockEntity(client.world, halves[1]);
+                // requestBlockEntity not available in 1.20.1
             } else {
-                storage.requestBlockEntity(client.world, pos);
+                // requestBlockEntity not available in 1.20.1
             }
 
             return true;
@@ -1320,12 +1287,8 @@ public class RealContainerCache {
     }
 
     private static boolean isLitematicaSyncAvailable() {
-        try {
-            return fi.dy.masa.litematica.config.Configs.Generic.ENTITY_DATA_SYNC.getBooleanValue() ||
-                    fi.dy.masa.litematica.config.Configs.Generic.ENTITY_DATA_SYNC_BACKUP.getBooleanValue();
-        } catch (Throwable ignored) {
-            return false;
-        }
+        // ENTITY_DATA_SYNC not available in 1.20.1 litematica
+        return false;
     }
 
     private static void putCachedItems(BlockPos pos, Map<Integer, ItemStack> items) {

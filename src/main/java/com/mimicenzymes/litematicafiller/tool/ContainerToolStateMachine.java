@@ -17,15 +17,15 @@ import com.mimicenzymes.litematicafiller.network.TakeItOutCompat;
 import com.mimicenzymes.litematicafiller.render.ToolHudRenderer;
 import fi.dy.masa.litematica.materials.MaterialListEntry;
 import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
+import net.minecraft.item.BlockItem;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.HandledScreen;
-import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtList;
 import net.minecraft.network.packet.c2s.play.CloseHandledScreenC2SPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.PlayerScreenHandler;
@@ -102,15 +102,23 @@ public class ContainerToolStateMachine {
         this.shulkerExtractor = DependencyChecker.HAS_QUICK_SHULKER ? new QuickShulkerWrapper() : new DummyExtractor();
     }
 
-    private static Iterable<ItemStack> containerStacks(ContainerComponent component) {
-        return () -> component.stream().iterator();
+    private static List<ItemStack> containerStacksFromNbt(NbtCompound blockEntityTag) {
+        if (blockEntityTag == null || !blockEntityTag.contains("Items")) return java.util.Collections.emptyList();
+        NbtList itemsList = blockEntityTag.getList("Items", 10);
+        java.util.List<ItemStack> stacks = new java.util.ArrayList<>();
+        for (int i = 0; i < itemsList.size(); i++) {
+            NbtCompound itemTag = itemsList.getCompound(i);
+            ItemStack stack = ItemStack.fromNbt(itemTag);
+            if (!stack.isEmpty()) stacks.add(stack);
+        }
+        return stacks;
     }
 
-    private static ItemStack getContainerStackAt(ContainerComponent component, int targetIndex) {
-        if (component == null || targetIndex < 0) return ItemStack.EMPTY;
+    private static ItemStack getContainerStackAt(NbtCompound blockEntityTag, int targetIndex) {
+        if (blockEntityTag == null || targetIndex < 0) return ItemStack.EMPTY;
 
         int index = 0;
-        for (ItemStack stack : containerStacks(component)) {
+        for (ItemStack stack : containerStacksFromNbt(blockEntityTag)) {
             if (index == targetIndex) return stack;
             index++;
         }
@@ -1071,10 +1079,10 @@ public class ContainerToolStateMachine {
                 ItemStack shulker = client.player.getInventory().getStack(i);
                 if (!isShulkerBox(shulker)) continue;
 
-                ContainerComponent component = shulker.get(DataComponentTypes.CONTAINER);
-                if (component == null) continue;
+                NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
+                if (component == null || !component.contains("Items")) continue;
 
-                for (ItemStack inner : containerStacks(component)) {
+                for (ItemStack inner : containerStacksFromNbt(component)) {
                     if (ItemMatcher.isSameItem(inner, req)) {
                         slots.add(i);
                         amountToFind -= inner.getCount();
@@ -1377,12 +1385,12 @@ public class ContainerToolStateMachine {
     }
 
     private boolean canShulkerAccept(ItemStack shulker, ItemStack stack, boolean requireMatching) {
-        ContainerComponent component = shulker.get(DataComponentTypes.CONTAINER);
-        if (component == null) {
+        NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
+        if (component == null || !component.contains("Items")) {
             return !requireMatching;
         }
 
-        List<ItemStack> innerStacks = component.stream().toList();
+        List<ItemStack> innerStacks = containerStacksFromNbt(component);
         if (innerStacks.isEmpty()) {
             return !requireMatching;
         }
@@ -1406,12 +1414,12 @@ public class ContainerToolStateMachine {
     private int getShulkerCapacityForItem(ItemStack shulker, ItemStack stack) {
         if (!isShulkerBox(shulker) || stack.isEmpty()) return 0;
 
-        ContainerComponent component = shulker.get(DataComponentTypes.CONTAINER);
-        if (component == null) {
+        NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
+        if (component == null || !component.contains("Items")) {
             return 27 * stack.getMaxCount();
         }
 
-        List<ItemStack> innerStacks = component.stream().toList();
+        List<ItemStack> innerStacks = containerStacksFromNbt(component);
         int capacity = Math.max(0, 27 - innerStacks.size()) * stack.getMaxCount();
         for (ItemStack inner : innerStacks) {
             if (ItemMatcher.isSameItem(inner, stack)) {
@@ -1422,12 +1430,15 @@ public class ContainerToolStateMachine {
     }
 
     private boolean isShulkerBox(ItemStack stack) {
-        return stack.getItem() instanceof BlockItem blockItem && blockItem.getBlock() instanceof ShulkerBoxBlock;
+        if (stack.getItem() instanceof BlockItem) {
+            return ((BlockItem) stack.getItem()).getBlock() instanceof ShulkerBoxBlock;
+        }
+        return false;
     }
 
     private QuickShulkerOpenMode getQuickShulkerOpenMode() {
-        if (Configs.QUICK_SHULKER_OPEN_MODE.getOptionListValue() instanceof QuickShulkerOpenMode mode) {
-            return mode;
+        if (Configs.QUICK_SHULKER_OPEN_MODE.getOptionListValue() instanceof QuickShulkerOpenMode) {
+            return (QuickShulkerOpenMode) Configs.QUICK_SHULKER_OPEN_MODE.getOptionListValue();
         }
         return QuickShulkerOpenMode.INVOKE;
     }
@@ -1468,8 +1479,8 @@ public class ContainerToolStateMachine {
         ItemStack shulker = client.player.getInventory().getStack(request.shulkerSlot());
         if (!isShulkerBox(shulker)) return true;
 
-        ContainerComponent component = shulker.get(DataComponentTypes.CONTAINER);
-        if (component == null) return true;
+        NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
+        if (component == null || !component.contains("Items")) return true;
 
         ItemStack inner = getContainerStackAt(component, request.innerSlot());
         return inner.isEmpty() || !ItemMatcher.isSameItem(inner, request.requestedStack());
@@ -1481,11 +1492,11 @@ public class ContainerToolStateMachine {
                 ItemStack shulker = client.player.getInventory().getStack(shulkerSlot);
                 if (!isShulkerBox(shulker)) continue;
 
-                ContainerComponent component = shulker.get(DataComponentTypes.CONTAINER);
-                if (component == null) continue;
+                NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
+                if (component == null || !component.contains("Items")) continue;
 
                 int innerSlot = 0;
-                for (ItemStack inner : containerStacks(component)) {
+                for (ItemStack inner : containerStacksFromNbt(component)) {
                     if (ItemMatcher.isSameItem(inner, req)) {
                         return new TakeItOutRequest(shulkerSlot, innerSlot, req.copy(), countItemInPlayerInv(client, req));
                     }

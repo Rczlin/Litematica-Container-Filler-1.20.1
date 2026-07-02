@@ -3,7 +3,6 @@ package com.mimicenzymes.litematicafiller.mixin;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
-import net.minecraft.registry.RegistryWrapper;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -16,7 +15,7 @@ public class BlockEntityMixin {
             "createNbt",
             "createNbtWithIdentifyingData"
     }, at = @At("RETURN"))
-    private void onSerializeNbtAny(RegistryWrapper.WrapperLookup registries, CallbackInfoReturnable<NbtCompound> cir) {
+    private void onSerializeNbtAny(CallbackInfoReturnable<NbtCompound> cir) {
         if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) return;
         if (com.mimicenzymes.litematicafiller.core.MaterialReplacer.isNbtReplacementSuppressed()) return;
 
@@ -29,7 +28,7 @@ public class BlockEntityMixin {
                 if (schematicKey == null) {
                     schematicKey = com.mimicenzymes.litematicafiller.core.LitematicaContainerReader.findSchematicKeyForPosition(blockEntity.getPos());
                 }
-                com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInNbtList((NbtList) nbt.get("Items"), registries, schematicKey);
+                com.mimicenzymes.litematicafiller.core.MaterialReplacer.replaceInNbtList((NbtList) nbt.get("Items"), schematicKey);
             }
         }
     }

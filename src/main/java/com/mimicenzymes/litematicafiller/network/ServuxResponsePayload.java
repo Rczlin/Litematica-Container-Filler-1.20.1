@@ -1,50 +1,49 @@
 package com.mimicenzymes.litematicafiller.network;
 
 import net.minecraft.item.ItemStack;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
+import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.HashMap;
 import java.util.Map;
 
-public record ServuxResponsePayload(BlockPos pos, Map<Integer, ItemStack> items) implements CustomPayload {
+public class ServuxResponsePayload {
+    public static final Identifier ID = new Identifier("servux", "hud_data_sync");
 
-    public static final CustomPayload.Id<ServuxResponsePayload> ID = new CustomPayload.Id<>(Identifier.of("servux", "hud_data_sync"));
+    private final BlockPos pos;
+    private final Map<Integer, ItemStack> items;
 
-    public static final PacketCodec<RegistryByteBuf, ServuxResponsePayload> CODEC = PacketCodec.of(
-            (value, buf) -> {
-            },
-            buf -> {
-                Map<Integer, ItemStack> parsedItems = new HashMap<>();
-                BlockPos parsedPos = null;
+    public ServuxResponsePayload(BlockPos pos, Map<Integer, ItemStack> items) {
+        this.pos = pos;
+        this.items = items;
+    }
 
-                try {
-                    parsedPos = buf.readBlockPos();
-                    int size = buf.readVarInt();
+    public BlockPos pos() { return pos; }
+    public Map<Integer, ItemStack> items() { return items; }
 
-                    for (int i = 0; i < size; i++) {
-                        int slot = buf.readVarInt();
-                        ItemStack stack = ItemStack.PACKET_CODEC.decode(buf);
-                        if (!stack.isEmpty()) {
-                            parsedItems.put(slot, stack);
-                        }
-                    }
-                } catch (Exception ignored) {
-                } finally {
-                    if (buf.readableBytes() > 0) {
-                        buf.skipBytes(buf.readableBytes());
-                    }
+    public static ServuxResponsePayload read(PacketByteBuf buf) {
+        Map<Integer, ItemStack> parsedItems = new HashMap<>();
+        BlockPos parsedPos = null;
+
+        try {
+            parsedPos = buf.readBlockPos();
+            int size = buf.readVarInt();
+
+            for (int i = 0; i < size; i++) {
+                int slot = buf.readVarInt();
+                ItemStack stack = buf.readItemStack();
+                if (!stack.isEmpty()) {
+                    parsedItems.put(slot, stack);
                 }
-
-                return new ServuxResponsePayload(parsedPos != null ? parsedPos : BlockPos.ORIGIN, parsedItems);
             }
-    );
+        } catch (Exception ignored) {
+        } finally {
+            if (buf.readableBytes() > 0) {
+                buf.skipBytes(buf.readableBytes());
+            }
+        }
 
-    @Override
-    public CustomPayload.Id<? extends CustomPayload> getId() {
-        return ID;
+        return new ServuxResponsePayload(parsedPos != null ? parsedPos : BlockPos.ORIGIN, parsedItems);
     }
 }

@@ -2,9 +2,9 @@ package com.mimicenzymes.litematicafiller.core;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
 import net.minecraft.block.ShulkerBoxBlock;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.ContainerComponent;
 import net.minecraft.item.BlockItem;
+import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtList;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.collection.DefaultedList;
 
@@ -15,7 +15,7 @@ public class ItemMatcher {
 
     public static boolean isSameItem(ItemStack current, ItemStack required) {
         if (current.isEmpty() || required.isEmpty()) return false;
-        if (ItemStack.areItemsAndComponentsEqual(current, required)) return true;
+        if (ItemStack.areEqual(current, required)) return true;
         return Configs.MATCH_SHULKER_BOXES_BY_CONTENT.getBooleanValue()
                 && isShulkerBox(current)
                 && isShulkerBox(required)
@@ -32,7 +32,7 @@ public class ItemMatcher {
             }
             return hash;
         }
-        return ItemStack.hashCode(stack);
+        return stack.hashCode();
     }
 
     private static boolean hasSameContainerContents(ItemStack current, ItemStack required) {
@@ -52,18 +52,21 @@ public class ItemMatcher {
     }
 
     private static List<ItemStack> getContainerSlots(ItemStack stack) {
-        ContainerComponent container = stack.get(DataComponentTypes.CONTAINER);
-        if (container == null) return List.of();
+        NbtCompound nbt = stack.getOrCreateNbt();
+        NbtCompound blockEntityTag = nbt.contains("BlockEntityTag") ? nbt.getCompound("BlockEntityTag") : null;
+        net.minecraft.nbt.NbtList itemsList = (blockEntityTag != null && blockEntityTag.contains("Items")) ? blockEntityTag.getList("Items", 10) : null;
+        if (itemsList == null) return List.of();
 
-        DefaultedList<ItemStack> copiedSlots = DefaultedList.ofSize(27, ItemStack.EMPTY);
-        container.copyTo(copiedSlots);
-
-        List<ItemStack> slots = new ArrayList<>(copiedSlots.size());
-        copiedSlots.forEach(slot -> {
-            ItemStack copy = slot.copy();
-            copy.setCount(slot.getCount());
-            slots.add(copy);
-        });
+        List<ItemStack> slots = new ArrayList<>();
+        for (int i = 0; i < itemsList.size(); i++) {
+            NbtCompound itemTag = itemsList.getCompound(i);
+            ItemStack inner = ItemStack.fromNbt(itemTag);
+            if (!inner.isEmpty()) {
+                slots.add(inner);
+            } else {
+                slots.add(ItemStack.EMPTY);
+            }
+        }
         return slots;
     }
 

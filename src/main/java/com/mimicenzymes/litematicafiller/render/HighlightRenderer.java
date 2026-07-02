@@ -10,7 +10,6 @@ import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.VertexBuffer;
 import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BuiltBuffer;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
@@ -194,14 +193,14 @@ public class HighlightRenderer {
 
     private ChunkRenderCache buildChunkCache(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos) {
         Tessellator tessellator = Tessellator.getInstance();
-        BuiltBuffer fillMeshData = null;
+        BufferBuilder.BuiltBuffer fillMeshData = null;
         VertexBuffer fillVertexBuffer = null;
         boolean keepBuffer = false;
         boolean renderShape = Configs.RENDER_STATE_GLASS.getBooleanValue() || Configs.RENDER_STATE_TOP_PLATE.getBooleanValue();
 
         try {
             if (renderShape) {
-                BufferBuilder fillBuffer = tessellator.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+                BufferBuilder fillBuffer = tessellator.getBuffer(); fillBuffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
                 for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
                     Color4f base = getColor(entry.getValue());
                     HighlightBox box = getHighlightBox(entry.getKey());
@@ -227,7 +226,7 @@ public class HighlightRenderer {
                     }
                 }
 
-                fillMeshData = fillBuffer.endNullable();
+                fillMeshData = fillBuffer.end();
                 if (fillMeshData != null) {
                     fillVertexBuffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
                     fillVertexBuffer.bind();
@@ -244,7 +243,6 @@ public class HighlightRenderer {
         } finally {
             VertexBuffer.unbind();
             if (fillMeshData != null) {
-                fillMeshData.close();
             }
             if (!keepBuffer) {
                 closeVertexBuffer(fillVertexBuffer);
@@ -267,7 +265,7 @@ public class HighlightRenderer {
         if (cache == null || cache.isEmpty()) return;
 
         var modelViewStack = RenderSystem.getModelViewStack();
-        modelViewStack.pushMatrix();
+        modelViewStack.push();
 
         try {
             modelViewStack.translate(renderOffset[0], renderOffset[1], renderOffset[2]);
@@ -276,7 +274,7 @@ public class HighlightRenderer {
             drawVertexBuffer(cache.lineVertexBuffer);
         } finally {
             VertexBuffer.unbind();
-            modelViewStack.popMatrix();
+            modelViewStack.pop();
             RenderSystem.applyModelViewMatrix();
         }
     }
@@ -315,8 +313,8 @@ public class HighlightRenderer {
         }
 
         Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        BuiltBuffer meshData = null;
+        BufferBuilder buffer = tessellator.getBuffer(); buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        BufferBuilder.BuiltBuffer meshData = null;
         VertexBuffer vertexBuffer = null;
         boolean keepBuffer = false;
 
@@ -344,7 +342,7 @@ public class HighlightRenderer {
                 }
             }
 
-            meshData = buffer.endNullable();
+            meshData = buffer.end();
             if (meshData == null) return;
 
             vertexBuffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
@@ -368,7 +366,6 @@ public class HighlightRenderer {
         } finally {
             VertexBuffer.unbind();
             if (meshData != null) {
-                meshData.close();
             }
             if (!keepBuffer && vertexBuffer != null) {
                 closeVertexBuffer(vertexBuffer);
