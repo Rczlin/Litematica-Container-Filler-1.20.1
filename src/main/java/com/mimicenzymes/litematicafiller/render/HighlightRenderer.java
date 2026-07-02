@@ -11,12 +11,15 @@ import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferBuilder;
 import net.minecraft.client.render.BufferRenderer;
+import net.minecraft.client.render.Camera;
+import net.minecraft.client.render.Frustum;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
 import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
@@ -28,8 +31,7 @@ import java.util.Set;
 
 /**
  * Renders container highlights and task overlays in the 3D world.
- * Uses immediate-mode drawing (Tessellator + BufferRenderer) each frame
- * for maximum compatibility with Minecraft 1.20.1.
+ * Uses immediate-mode drawing with frustum culling for better performance in Minecraft 1.20.1.
  */
 public class HighlightRenderer {
     private static final HighlightRenderer INSTANCE = new HighlightRenderer();
@@ -40,6 +42,13 @@ public class HighlightRenderer {
     private static final float MANUAL_BADGE_GAP = 0.014f;
     private static final float MANUAL_BADGE_SIZE = 0.44f;
     private static final float MANUAL_BADGE_THICKNESS = 0.034f;
+    private static final long TASK_ANIMATION_FRAME_INTERVAL_NS = 33_333_333L; // ~30 fps
+    private static final long HIGHLIGHT_ANIMATION_FRAME_INTERVAL_NS = 50_000_000L; // ~20 fps
+
+    private volatile float cachedTaskTime;
+    private volatile float cachedHighlightTime;
+    private long lastTaskTimeUpdate = Long.MIN_VALUE;
+    private long lastHighlightTimeUpdate = Long.MIN_VALUE;
 
     public static HighlightRenderer getInstance() { return INSTANCE; }
 
@@ -49,6 +58,11 @@ public class HighlightRenderer {
 
     public void render(Object context) {
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
+            return;
+        }
+
+        if (!(context instanceof WorldRenderContext renderContext)) {
+            // Fallback for unexpected callers; in practice fabric always provides a context.
             return;
         }
 
@@ -76,31 +90,30 @@ public class HighlightRenderer {
             return;
         }
 
+        Camera camera = renderContext.camera();
+        Frustum frustum = renderContext.frustum();
         boolean xray = Configs.HIGHLIGHT_XRAY.getBooleanValue();
-        Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
+        Vec3d cameraPos = camera.getPos();
 
         try {
-            setupRenderState(xray, context);
+            setupRenderState(xray, renderContext);
 
             if (anyHighlight) {
-                renderHighlights(highlights, cameraPos);
+                renderHighlights(highlights, cameraPos, frustum);
             }
 
             if (hasTaskOverlays) {
-                double rawTime = System.nanoTime() / 1_000_000_000.0D;
-                renderTaskOverlays(cameraPos, rawTime, currentTaskPos, queuedTaskPositions, missingMaterialPositions);
+                float time = getTaskAnimationTime();
+                renderTaskOverlays(cameraPos, time, currentTaskPos, queuedTaskPositions, missingMaterialPositions, frustum);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to render container highlights", e);
         } finally {
-            restoreRenderState(xray, context);
+            restoreRenderState(xray, renderContext);
         }
     }
 
-    private void renderHighlights(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos) {
-        Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.getBuffer();
-
+    private void renderHighlights(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos, Frustum frustum) {
         boolean renderGlass = Configs.RENDER_STATE_GLASS.getBooleanValue();
         boolean renderTopPlate = Configs.RENDER_STATE_TOP_PLATE.getBooleanValue();
 
@@ -108,14 +121,21 @@ public class HighlightRenderer {
             return;
         }
 
+        Tessellator tessellator = Tessellator.getInstance();
+        BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        float time = getHighlightAnimationTime();
 
         for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
             HighlightState state = entry.getValue();
             if (!shouldRenderState(state)) continue;
 
-            Color4f base = getColor(state);
             HighlightBox box = getHighlightBox(entry.getKey());
+            if (frustum != null && !frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+                continue;
+            }
+
+            Color4f base = getColor(state);
 
             if (renderGlass) {
                 float alphaMultiplier = (float) Configs.HIGHLIGHT_GLASS_ALPHA_MULTIPLIER.getDoubleValue();
@@ -134,7 +154,7 @@ public class HighlightRenderer {
             }
 
             if (isManualState(state)) {
-                drawManualOverrideBadge(box, state, cameraPos, buffer);
+                drawManualOverrideBadge(box, state, cameraPos, buffer, time);
             }
         }
 
@@ -144,15 +164,19 @@ public class HighlightRenderer {
         }
     }
 
-    private void renderTaskOverlays(Vec3d cameraPos, double time, BlockPos currentTaskPos,
+    private void renderTaskOverlays(Vec3d cameraPos, float time, BlockPos currentTaskPos,
                                      Set<BlockPos> queuedTaskPositions,
-                                     Set<BlockPos> missingMaterialPositions) {
+                                     Set<BlockPos> missingMaterialPositions,
+                                     Frustum frustum) {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
 
         if (Configs.RENDER_FILLING_ARROW.getBooleanValue() && currentTaskPos != null) {
-            drawFillingArrow(getHighlightBox(currentTaskPos), cameraPos, time, buffer);
+            HighlightBox box = getHighlightBox(currentTaskPos);
+            if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+                drawFillingArrow(box, cameraPos, time, buffer);
+            }
         }
 
         if (Configs.RENDER_QUEUED_SPINNER.getBooleanValue()) {
@@ -161,7 +185,10 @@ public class HighlightRenderer {
             for (BlockPos pos : queuedTaskPositions) {
                 if (pos == null || pos.equals(currentTaskPos)) continue;
                 if (count++ >= maxQueued) break;
-                drawQueuedSpinner(getHighlightBox(pos), cameraPos, time + count * 0.17D, buffer);
+                HighlightBox box = getHighlightBox(pos);
+                if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+                    drawQueuedSpinner(box, cameraPos, time + count * 0.17f, buffer);
+                }
             }
         }
 
@@ -170,7 +197,12 @@ public class HighlightRenderer {
             int maxMissing = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
             for (BlockPos pos : missingMaterialPositions) {
                 if (count++ >= maxMissing) break;
-                if (pos != null) drawMissingMaterialMarker(getHighlightBox(pos), cameraPos, time, buffer);
+                if (pos != null) {
+                    HighlightBox box = getHighlightBox(pos);
+                    if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+                        drawMissingMaterialMarker(box, cameraPos, time, buffer);
+                    }
+                }
             }
         }
 
@@ -180,7 +212,7 @@ public class HighlightRenderer {
         }
     }
 
-    private void setupRenderState(boolean xray, Object context) {
+    private void setupRenderState(boolean xray, WorldRenderContext context) {
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.disableCull();
@@ -198,22 +230,15 @@ public class HighlightRenderer {
         RenderSystem.polygonOffset(-1.2f, -0.2f);
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
 
-        // In Minecraft 1.20.1, RenderSystem.modelViewStack is NOT automatically
-        // populated with the camera view matrix during WorldRenderer.render().
-        // We need to push the camera rotation from WorldRenderContext.matrixStack()
-        // so the shader applies the correct rotation to our manually-translated
-        // (camera-relative) vertex positions.
         MatrixStack modelView = RenderSystem.getModelViewStack();
         modelView.push();
         modelView.peek().getPositionMatrix().identity();
-        if (context instanceof WorldRenderContext renderContext) {
-            Matrix4f cameraView = renderContext.matrixStack().peek().getPositionMatrix();
-            modelView.peek().getPositionMatrix().mul(cameraView);
-        }
+        Matrix4f cameraView = context.matrixStack().peek().getPositionMatrix();
+        modelView.peek().getPositionMatrix().mul(cameraView);
         RenderSystem.applyModelViewMatrix();
     }
 
-    private void restoreRenderState(boolean xray, Object context) {
+    private void restoreRenderState(boolean xray, WorldRenderContext context) {
         RenderSystem.polygonOffset(0f, 0f);
         RenderSystem.disablePolygonOffset();
         RenderSystem.lineWidth(1.0F);
@@ -232,12 +257,12 @@ public class HighlightRenderer {
 
     // ──── Drawing helpers ────
 
-    private void drawFillingArrow(HighlightBox box, Vec3d cameraPos, double time, BufferBuilder buffer) {
+    private void drawFillingArrow(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float cx = box.centerX();
         float cz = box.centerZ();
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
-        float y = box.maxY() + 0.64f + (float) Math.sin(time * 5.0D) * 0.045f;
-        float pulse = 0.5f + 0.5f * (float) Math.sin(time * 7.0D);
+        float y = box.maxY() + 0.64f + (float) Math.sin(time * 5.0f) * 0.045f;
+        float pulse = 0.5f + 0.5f * (float) Math.sin(time * 7.0f);
         Color4f base = Configs.HIGHLIGHT_COLOR_FILLING.getColor();
         Color4f body = new Color4f(base.r, base.g, base.b, Math.min(0.82f, base.a * (0.50f + pulse * 0.12f)));
         Color4f core = new Color4f(0.82f, 1.0f, 0.96f, 0.36f);
@@ -248,16 +273,16 @@ public class HighlightRenderer {
         drawCenteredWorldBox(cx, box.maxY() + 0.045f, cz, (0.24f + pulse * 0.05f) * scale, 0.020f * scale, glow, cameraPos, buffer);
     }
 
-    private void drawQueuedSpinner(HighlightBox box, Vec3d cameraPos, double time, BufferBuilder buffer) {
+    private void drawQueuedSpinner(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float cx = box.centerX();
         float cz = box.centerZ();
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
-        float cy = box.maxY() + 0.34f + (float) Math.sin(time * 2.4D) * 0.028f;
+        float cy = box.maxY() + 0.34f + (float) Math.sin(time * 2.4f) * 0.028f;
         float radius = 0.32f * scale;
         Color4f base = Configs.HIGHLIGHT_COLOR_QUEUED.getColor();
 
         for (int i = 0; i < 8; i++) {
-            double angle = time * 3.2D + i * Math.PI / 4.0D;
+            float angle = time * 3.2f + i * ((float) Math.PI / 4.0f);
             float x = cx + (float) Math.cos(angle) * radius;
             float z = cz + (float) Math.sin(angle) * radius;
             float alpha = Math.min(0.70f, base.a * (0.16f + i * 0.055f));
@@ -267,13 +292,13 @@ public class HighlightRenderer {
         drawCenteredWorldBox(cx, cy, cz, 0.15f * scale, 0.025f * scale, new Color4f(base.r, base.g, base.b, 0.12f), cameraPos, buffer);
     }
 
-    private void drawMissingMaterialMarker(HighlightBox box, Vec3d cameraPos, double time, BufferBuilder buffer) {
+    private void drawMissingMaterialMarker(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
         float cx = box.centerX();
         float cz = box.centerZ();
-        float cy = box.maxY() + 0.34f + (float) Math.sin(time * 4.4D) * 0.035f;
+        float cy = box.maxY() + 0.34f + (float) Math.sin(time * 4.4f) * 0.035f;
         Color4f base = Configs.HIGHLIGHT_COLOR_MISSING_MATERIAL.getColor();
-        float pulse = 0.5f + 0.5f * (float) Math.sin(time * 8.0D);
+        float pulse = 0.5f + 0.5f * (float) Math.sin(time * 8.0f);
         Color4f color = new Color4f(base.r, base.g, base.b, Math.min(0.82f, base.a * (0.42f + pulse * 0.22f)));
 
         drawCenteredWorldBox(cx, cy + 0.24f * scale, cz, 0.070f * scale, 0.045f * scale, color, cameraPos, buffer);
@@ -391,12 +416,13 @@ public class HighlightRenderer {
         return state == HighlightState.MANUAL_COMPLETED || state == HighlightState.MANUAL_NEEDS_FILL;
     }
 
-    private void drawManualOverrideBadge(HighlightBox box, HighlightState state, Vec3d cameraPos, BufferBuilder buffer) {
+    private void drawManualOverrideBadge(HighlightBox box, HighlightState state, Vec3d cameraPos, BufferBuilder buffer, float time) {
         float size = Math.min(box.maxX() - box.minX(), box.maxZ() - box.minZ());
         float cx = box.centerX();
         float cz = box.centerZ();
         float thickness = Math.max(0.022f, size * MANUAL_BADGE_THICKNESS);
-        float y = box.maxY() + TOP_PLATE_TOP_OFFSET + MANUAL_BADGE_GAP;
+        float yBase = box.maxY() + TOP_PLATE_TOP_OFFSET + MANUAL_BADGE_GAP;
+        float y = yBase + (float) Math.sin(time * 3.0f) * 0.012f;
         float half = size * MANUAL_BADGE_SIZE * 0.5f;
         Color4f ring = state == HighlightState.MANUAL_COMPLETED
                 ? new Color4f(0.88f, 1.0f, 0.95f, 0.76f)
@@ -432,6 +458,24 @@ public class HighlightRenderer {
         }
 
         return HighlightBox.of(halves[0], halves[1]);
+    }
+
+    private float getTaskAnimationTime() {
+        long now = System.nanoTime();
+        if (now - lastTaskTimeUpdate >= TASK_ANIMATION_FRAME_INTERVAL_NS) {
+            cachedTaskTime = (float) (now / 1_000_000_000.0D);
+            lastTaskTimeUpdate = now;
+        }
+        return cachedTaskTime;
+    }
+
+    private float getHighlightAnimationTime() {
+        long now = System.nanoTime();
+        if (now - lastHighlightTimeUpdate >= HIGHLIGHT_ANIMATION_FRAME_INTERVAL_NS) {
+            cachedHighlightTime = (float) (now / 1_000_000_000.0D);
+            lastHighlightTimeUpdate = now;
+        }
+        return cachedHighlightTime;
     }
 
     private record HighlightBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
