@@ -105,7 +105,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
             }
         });
 
-        WorldRenderEvents.AFTER_ENTITIES.register(context -> {
+        WorldRenderEvents.LAST.register(context -> {
             if (Configs.ENABLE_MOD.getBooleanValue() && Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
                 ContainerHighlighter.onRender(context);
             }

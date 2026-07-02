@@ -8,8 +8,8 @@ import com.mojang.logging.LogUtils;
 import fi.dy.masa.malilib.util.Color4f;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gl.VertexBuffer;
 import net.minecraft.client.render.BufferBuilder;
+import net.minecraft.client.render.BufferRenderer;
 import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
@@ -20,35 +20,23 @@ import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * Renders container highlights and task overlays in the 3D world.
+ * Uses immediate-mode drawing (Tessellator + BufferRenderer) each frame
+ * for maximum compatibility with Minecraft 1.20.1.
+ */
 public class HighlightRenderer {
     private static final HighlightRenderer INSTANCE = new HighlightRenderer();
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final long EMPTY_SIGNATURE = Long.MIN_VALUE;
-    private static final int RENDER_CACHE_REGION_SHIFT = 6;
-    private static final int MAX_CHUNK_REBUILDS_PER_FRAME = 1;
     private static final float TOP_PLATE_MIN_INSET = 0.02f;
     private static final float TOP_PLATE_BOTTOM_OFFSET = 0.035f;
     private static final float TOP_PLATE_TOP_OFFSET = 0.095f;
     private static final float MANUAL_BADGE_GAP = 0.014f;
     private static final float MANUAL_BADGE_SIZE = 0.44f;
     private static final float MANUAL_BADGE_THICKNESS = 0.034f;
-
-    private final Map<ChunkKey, ChunkRenderCache> chunkCaches = new HashMap<>();
-    private final Map<ChunkKey, Map<BlockPos, HighlightState>> desiredChunks = new HashMap<>();
-    private final Map<ChunkKey, ChunkFingerprint> desiredChunkFingerprints = new HashMap<>();
-    private final Set<ChunkKey> dirtyChunks = new LinkedHashSet<>();
-    private final float[] renderOffset = new float[3];
-    private int cachedHighlightVersion = -1;
-    private long cachedStyleSignature = EMPTY_SIGNATURE;
-    private ChunkRenderCache taskOverlayCache = null;
-    private long taskOverlaySignature = EMPTY_SIGNATURE;
-    private long taskOverlayFrame = Long.MIN_VALUE;
 
     public static HighlightRenderer getInstance() { return INSTANCE; }
 
@@ -58,318 +46,134 @@ public class HighlightRenderer {
 
     public void render(Object context) {
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
-            clearRenderCache();
             return;
         }
 
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.world == null || client.player == null) {
-            clearRenderCache();
             return;
         }
 
         AutoFillerStateMachine filler = AutoFillerStateMachine.getInstance();
         Map<BlockPos, HighlightState> highlights = HighlightScanner.getHighlights();
+        boolean anyHighlight = !highlights.isEmpty();
         boolean renderFilling = Configs.RENDER_FILLING_ARROW.getBooleanValue();
         boolean renderQueued = Configs.RENDER_QUEUED_SPINNER.getBooleanValue();
         boolean renderMissing = Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue();
-        if (highlights.isEmpty() && !filler.hasRenderableTaskMarkers(renderFilling, renderQueued, renderMissing)) {
-            clearRenderCache();
-            return;
-        }
 
         BlockPos currentTaskPos = renderFilling ? filler.getCurrentTaskPos() : null;
         Set<BlockPos> queuedTaskPositions = renderQueued ? filler.getQueuedTaskPositions() : Collections.emptySet();
         Set<BlockPos> missingMaterialPositions = renderMissing ? filler.getMissingMaterialPositions() : Collections.emptySet();
-        Set<BlockPos> recentFillingPositions = filler.getRecentFillingPositions();
+
+        boolean hasTaskOverlays = (currentTaskPos != null)
+                || !queuedTaskPositions.isEmpty()
+                || !missingMaterialPositions.isEmpty();
+
+        if (!anyHighlight && !hasTaskOverlays) {
+            return;
+        }
+
         boolean xray = Configs.HIGHLIGHT_XRAY.getBooleanValue();
         Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
 
-        boolean stateApplied = false;
         try {
             setupRenderState(xray);
-            stateApplied = true;
 
-            if (!highlights.isEmpty()) {
-                long styleSignature = computeStyleSignature(xray);
-                int highlightVersion = HighlightScanner.getHighlightVersion();
-
-                if (cachedStyleSignature != styleSignature) {
-                    clearRenderCache();
-                    cachedStyleSignature = styleSignature;
-                }
-
-                if (cachedHighlightVersion != highlightVersion) {
-                    updateDesiredChunks(highlights);
-                    cachedHighlightVersion = highlightVersion;
-                }
-
-                rebuildDirtyChunks(cameraPos);
-                drawChunkCaches(cameraPos);
-            } else {
-                clearChunkRenderCache();
+            if (anyHighlight) {
+                renderHighlights(highlights, cameraPos);
             }
 
-            drawTaskOverlays(cameraPos, xray, currentTaskPos, queuedTaskPositions, missingMaterialPositions, recentFillingPositions);
+            if (hasTaskOverlays) {
+                double rawTime = System.nanoTime() / 1_000_000_000.0D;
+                renderTaskOverlays(cameraPos, rawTime, currentTaskPos, queuedTaskPositions, missingMaterialPositions);
+            }
         } catch (Exception e) {
-            clearRenderCache();
             LOGGER.warn("Failed to render container highlights", e);
         } finally {
-            if (stateApplied) {
-                restoreRenderState(xray);
-            }
+            restoreRenderState(xray);
         }
     }
 
-    private void updateDesiredChunks(Map<BlockPos, HighlightState> highlights) {
-        Map<ChunkKey, ChunkUpdate> nextChunks = new HashMap<>(Math.max(16, highlights.size() >> 4));
+    private void renderHighlights(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos) {
+        Tessellator tessellator = Tessellator.getInstance();
+        BufferBuilder buffer = tessellator.getBuffer();
+
+        boolean renderGlass = Configs.RENDER_STATE_GLASS.getBooleanValue();
+        boolean renderTopPlate = Configs.RENDER_STATE_TOP_PLATE.getBooleanValue();
+
+        if (!renderGlass && !renderTopPlate) {
+            return;
+        }
+
+        buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+
         for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
             HighlightState state = entry.getValue();
             if (!shouldRenderState(state)) continue;
 
-            BlockPos pos = entry.getKey().toImmutable();
-            ChunkKey key = ChunkKey.from(pos);
-            ChunkUpdate update = nextChunks.get(key);
-            if (update == null) {
-                update = new ChunkUpdate();
-                nextChunks.put(key, update);
+            Color4f base = getColor(state);
+            HighlightBox box = getHighlightBox(entry.getKey());
+
+            if (renderGlass) {
+                float alphaMultiplier = (float) Configs.HIGHLIGHT_GLASS_ALPHA_MULTIPLIER.getDoubleValue();
+                Color4f glass = new Color4f(base.r, base.g, base.b, Math.min(0.24f, Math.max(0.04f, base.a * alphaMultiplier)));
+                drawInflatedWorldBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ(), 0.012f, glass, cameraPos, buffer);
             }
-            update.add(pos, state, highlightEntryHash(pos, state));
+
+            if (renderTopPlate) {
+                Color4f crown = new Color4f(base.r, base.g, base.b, Math.min(0.34f, Math.max(0.12f, base.a * 0.36f)));
+                float inset = Math.max(TOP_PLATE_MIN_INSET, (1.0f - (float) Configs.HIGHLIGHT_TOP_PLATE_SIZE.getDoubleValue()) * 0.5f);
+                drawWorldBox(
+                        box.minX() + inset, box.maxY() + TOP_PLATE_BOTTOM_OFFSET, box.minZ() + inset,
+                        box.maxX() - inset, box.maxY() + TOP_PLATE_TOP_OFFSET, box.maxZ() - inset,
+                        crown, cameraPos, buffer
+                );
+            }
+
+            if (isManualState(state)) {
+                drawManualOverrideBadge(box, state, cameraPos, buffer);
+            }
         }
 
-        Iterator<ChunkKey> existing = desiredChunks.keySet().iterator();
-        while (existing.hasNext()) {
-            ChunkKey key = existing.next();
-            if (!nextChunks.containsKey(key)) {
-                existing.remove();
-                desiredChunkFingerprints.remove(key);
-                dirtyChunks.remove(key);
-                removeChunkCache(key);
-            }
-        }
-
-        for (Map.Entry<ChunkKey, ChunkUpdate> entry : nextChunks.entrySet()) {
-            ChunkKey key = entry.getKey();
-            ChunkUpdate update = entry.getValue();
-            ChunkFingerprint fingerprint = update.fingerprint();
-            if (!fingerprint.equals(desiredChunkFingerprints.get(key))) {
-                desiredChunks.put(key, update.states);
-                desiredChunkFingerprints.put(key, fingerprint);
-                dirtyChunks.add(key);
-            }
+        BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+        if (builtBuffer != null && !builtBuffer.isEmpty()) {
+            BufferRenderer.drawWithGlobalProgram(builtBuffer);
         }
     }
 
-    private void rebuildDirtyChunks(Vec3d cameraPos) {
-        int rebuilt = 0;
-        Iterator<ChunkKey> iterator = dirtyChunks.iterator();
-
-        while (iterator.hasNext() && rebuilt < MAX_CHUNK_REBUILDS_PER_FRAME) {
-            ChunkKey key = iterator.next();
-            Map<BlockPos, HighlightState> highlights = desiredChunks.get(key);
-
-            if (highlights == null || highlights.isEmpty()) {
-                iterator.remove();
-                removeChunkCache(key);
-                continue;
-            }
-
-            ChunkRenderCache cache = buildChunkCache(highlights, cameraPos);
-            if (cache == null) {
-                iterator.remove();
-                removeChunkCache(key);
-                continue;
-            }
-
-            ChunkRenderCache oldCache = chunkCaches.put(key, cache);
-            if (oldCache != null) {
-                closeChunkCache(oldCache);
-            }
-
-            iterator.remove();
-            rebuilt++;
-        }
-    }
-
-    private ChunkRenderCache buildChunkCache(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos) {
+    private void renderTaskOverlays(Vec3d cameraPos, double time, BlockPos currentTaskPos,
+                                     Set<BlockPos> queuedTaskPositions,
+                                     Set<BlockPos> missingMaterialPositions) {
         Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder.BuiltBuffer fillMeshData = null;
-        VertexBuffer fillVertexBuffer = null;
-        boolean keepBuffer = false;
-        boolean renderShape = Configs.RENDER_STATE_GLASS.getBooleanValue() || Configs.RENDER_STATE_TOP_PLATE.getBooleanValue();
+        BufferBuilder buffer = tessellator.getBuffer();
+        buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
 
-        try {
-            if (renderShape) {
-                BufferBuilder fillBuffer = tessellator.getBuffer(); fillBuffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-                for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
-                    Color4f base = getColor(entry.getValue());
-                    HighlightBox box = getHighlightBox(entry.getKey());
-
-                    if (Configs.RENDER_STATE_GLASS.getBooleanValue()) {
-                        float alphaMultiplier = (float) Configs.HIGHLIGHT_GLASS_ALPHA_MULTIPLIER.getDoubleValue();
-                        Color4f glass = new Color4f(base.r, base.g, base.b, Math.min(0.24f, Math.max(0.04f, base.a * alphaMultiplier)));
-                        drawInflatedWorldBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ(), 0.012f, glass, cameraPos, fillBuffer);
-                    }
-
-                    if (Configs.RENDER_STATE_TOP_PLATE.getBooleanValue()) {
-                        Color4f crown = new Color4f(base.r, base.g, base.b, Math.min(0.34f, Math.max(0.12f, base.a * 0.36f)));
-                        float inset = Math.max(TOP_PLATE_MIN_INSET, (1.0f - (float) Configs.HIGHLIGHT_TOP_PLATE_SIZE.getDoubleValue()) * 0.5f);
-                        drawWorldBox(
-                                box.minX() + inset, box.maxY() + TOP_PLATE_BOTTOM_OFFSET, box.minZ() + inset,
-                                box.maxX() - inset, box.maxY() + TOP_PLATE_TOP_OFFSET, box.maxZ() - inset,
-                                crown, cameraPos, fillBuffer
-                        );
-                    }
-
-                    if (isManualState(entry.getValue())) {
-                        drawManualOverrideBadge(box, entry.getValue(), cameraPos, fillBuffer);
-                    }
-                }
-
-                fillMeshData = fillBuffer.end();
-                if (fillMeshData != null) {
-                    fillVertexBuffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
-                    fillVertexBuffer.bind();
-                    fillVertexBuffer.upload(fillMeshData);
-                    fillMeshData = null;
-                }
-            }
-
-            if (fillVertexBuffer == null) return null;
-
-            ChunkRenderCache cache = new ChunkRenderCache(fillVertexBuffer, null, cameraPos.x, cameraPos.y, cameraPos.z);
-            keepBuffer = true;
-            return cache;
-        } finally {
-            VertexBuffer.unbind();
-            if (fillMeshData != null) {
-            }
-            if (!keepBuffer) {
-                closeVertexBuffer(fillVertexBuffer);
-            }
-        }
-    }
-
-    private void drawChunkCaches(Vec3d cameraPos) {
-        for (ChunkRenderCache cache : chunkCaches.values()) {
-            if (cache.isEmpty()) continue;
-
-            renderOffset[0] = (float) (cache.cameraX - cameraPos.x);
-            renderOffset[1] = (float) (cache.cameraY - cameraPos.y);
-            renderOffset[2] = (float) (cache.cameraZ - cameraPos.z);
-            drawChunkCache(cache);
-        }
-    }
-
-    private void drawChunkCache(ChunkRenderCache cache) {
-        if (cache == null || cache.isEmpty()) return;
-
-        var modelViewStack = RenderSystem.getModelViewStack();
-        modelViewStack.push();
-
-        try {
-            modelViewStack.translate(renderOffset[0], renderOffset[1], renderOffset[2]);
-            RenderSystem.applyModelViewMatrix();
-            drawVertexBuffer(cache.fillVertexBuffer);
-            drawVertexBuffer(cache.lineVertexBuffer);
-        } finally {
-            VertexBuffer.unbind();
-            modelViewStack.pop();
-            RenderSystem.applyModelViewMatrix();
-        }
-    }
-
-    private void drawVertexBuffer(VertexBuffer vertexBuffer) {
-        if (vertexBuffer == null || vertexBuffer.isClosed()) return;
-
-        vertexBuffer.bind();
-        vertexBuffer.draw(RenderSystem.getModelViewMatrix(), RenderSystem.getProjectionMatrix(), RenderSystem.getShader());
-    }
-
-    private boolean hasTaskOverlay(BlockPos currentTaskPos, Set<BlockPos> queuedTaskPositions, Set<BlockPos> missingMaterialPositions) {
-        return (Configs.RENDER_FILLING_ARROW.getBooleanValue() && currentTaskPos != null)
-                || (Configs.RENDER_QUEUED_SPINNER.getBooleanValue() && !queuedTaskPositions.isEmpty())
-                || (Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue() && !missingMaterialPositions.isEmpty());
-    }
-
-    private void drawTaskOverlays(Vec3d cameraPos, boolean xray, BlockPos currentTaskPos, Set<BlockPos> queuedTaskPositions, Set<BlockPos> missingMaterialPositions, Set<BlockPos> recentFillingPositions) {
-        if (!hasTaskOverlay(currentTaskPos, queuedTaskPositions, missingMaterialPositions)) {
-            clearTaskOverlayCache();
-            return;
+        if (Configs.RENDER_FILLING_ARROW.getBooleanValue() && currentTaskPos != null) {
+            drawFillingArrow(getHighlightBox(currentTaskPos), cameraPos, time, buffer);
         }
 
-        int fpsLimit = Configs.TASK_MARKER_ANIMATION_FPS.getIntegerValue();
-        double rawTime = System.nanoTime() / 1_000_000_000.0D;
-        long frame = fpsLimit <= 0 ? System.nanoTime() : (long) Math.floor(rawTime * fpsLimit);
-        double time = fpsLimit <= 0 ? rawTime : frame / (double) fpsLimit;
-        long signature = computeTaskOverlaySignature(xray, currentTaskPos, queuedTaskPositions, missingMaterialPositions);
-
-        if (taskOverlayCache != null && taskOverlaySignature == signature && taskOverlayFrame == frame) {
-            renderOffset[0] = (float) (taskOverlayCache.cameraX - cameraPos.x);
-            renderOffset[1] = (float) (taskOverlayCache.cameraY - cameraPos.y);
-            renderOffset[2] = (float) (taskOverlayCache.cameraZ - cameraPos.z);
-            drawChunkCache(taskOverlayCache);
-            return;
+        if (Configs.RENDER_QUEUED_SPINNER.getBooleanValue()) {
+            int count = 0;
+            int maxQueued = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
+            for (BlockPos pos : queuedTaskPositions) {
+                if (pos == null || pos.equals(currentTaskPos)) continue;
+                if (count++ >= maxQueued) break;
+                drawQueuedSpinner(getHighlightBox(pos), cameraPos, time + count * 0.17D, buffer);
+            }
         }
 
-        Tessellator tessellator = Tessellator.getInstance();
-        BufferBuilder buffer = tessellator.getBuffer(); buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        BufferBuilder.BuiltBuffer meshData = null;
-        VertexBuffer vertexBuffer = null;
-        boolean keepBuffer = false;
-
-        try {
-            if (Configs.RENDER_FILLING_ARROW.getBooleanValue() && currentTaskPos != null) {
-                drawFillingArrow(getHighlightBox(currentTaskPos), cameraPos, time, buffer);
+        if (Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue()) {
+            int count = 0;
+            int maxMissing = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
+            for (BlockPos pos : missingMaterialPositions) {
+                if (count++ >= maxMissing) break;
+                if (pos != null) drawMissingMaterialMarker(getHighlightBox(pos), cameraPos, time, buffer);
             }
+        }
 
-            if (Configs.RENDER_QUEUED_SPINNER.getBooleanValue()) {
-                int count = 0;
-                int maxQueued = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
-                for (BlockPos pos : queuedTaskPositions) {
-                    if (pos == null || pos.equals(currentTaskPos)) continue;
-                    if (count++ >= maxQueued) break;
-                    drawQueuedSpinner(getHighlightBox(pos), cameraPos, time + count * 0.17D, buffer);
-                }
-            }
-
-            if (Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue()) {
-                int count = 0;
-                int maxMissing = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
-                for (BlockPos pos : missingMaterialPositions) {
-                    if (count++ >= maxMissing) break;
-                    if (pos != null) drawMissingMaterialMarker(getHighlightBox(pos), cameraPos, time, buffer);
-                }
-            }
-
-            meshData = buffer.end();
-            if (meshData == null) return;
-
-            vertexBuffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
-            vertexBuffer.bind();
-            vertexBuffer.upload(meshData);
-            meshData = null;
-
-            ChunkRenderCache cache = new ChunkRenderCache(vertexBuffer, null, cameraPos.x, cameraPos.y, cameraPos.z);
-            keepBuffer = true;
-            clearTaskOverlayCache();
-            taskOverlayCache = cache;
-            taskOverlaySignature = signature;
-            taskOverlayFrame = frame;
-            renderOffset[0] = 0.0f;
-            renderOffset[1] = 0.0f;
-            renderOffset[2] = 0.0f;
-            drawChunkCache(cache);
-        } catch (Exception e) {
-            clearTaskOverlayCache();
-            LOGGER.warn("Failed to render container task overlays", e);
-        } finally {
-            VertexBuffer.unbind();
-            if (meshData != null) {
-            }
-            if (!keepBuffer && vertexBuffer != null) {
-                closeVertexBuffer(vertexBuffer);
-            }
+        BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+        if (builtBuffer != null && !builtBuffer.isEmpty()) {
+            BufferRenderer.drawWithGlobalProgram(builtBuffer);
         }
     }
 
@@ -407,6 +211,8 @@ public class HighlightRenderer {
         RenderSystem.disableBlend();
         RenderSystem.applyModelViewMatrix();
     }
+
+    // ──── Drawing helpers ────
 
     private void drawFillingArrow(HighlightBox box, Vec3d cameraPos, double time, BufferBuilder buffer) {
         float cx = box.centerX();
@@ -530,121 +336,14 @@ public class HighlightRenderer {
     }
 
     private void vertex(float x, float y, float z, Color4f color, BufferBuilder buffer) {
-        buffer.vertex(x, y, z).color(toChannel(color.r), toChannel(color.g), toChannel(color.b), toChannel(color.a));
+        buffer.vertex(x, y, z).color(toChannel(color.r), toChannel(color.g), toChannel(color.b), toChannel(color.a)).next();
     }
 
     private int toChannel(float value) {
         return Math.max(0, Math.min(255, Math.round(value * 255.0f)));
     }
 
-    private long computeStyleSignature(boolean xray) {
-        long sum = xray ? 0x4f1bbcdc7c3a4f31L : 0x9e3779b97f4a7c15L;
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_UNFILLED.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_PARTIAL.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_OVERFILLED.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_WRONG.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_SATISFIED.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_UNKNOWN.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_UNPLACED.getColor().intValue);
-        sum = mix64(sum ^ 0x4d414e55414c4f4bL);
-        sum = mix64(sum ^ (Configs.RENDER_STATE_UNFILLED.getBooleanValue() ? 0x11L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_PARTIAL.getBooleanValue() ? 0x22L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_OVERFILLED.getBooleanValue() ? 0x44L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_WRONG.getBooleanValue() ? 0x88L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_SATISFIED.getBooleanValue() ? 0x101L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_UNKNOWN.getBooleanValue() ? 0x202L : 0L));
-        sum = mix64(sum ^ (Configs.HIGHLIGHT_UNPLACED_CONTAINERS.getBooleanValue() ? 0x404L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_GLASS.getBooleanValue() ? 1L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_STATE_TOP_PLATE.getBooleanValue() ? 2L : 0L));
-        sum = mix64(sum ^ Double.doubleToLongBits(Configs.HIGHLIGHT_GLASS_ALPHA_MULTIPLIER.getDoubleValue()));
-        return mix64(sum ^ Double.doubleToLongBits(Configs.HIGHLIGHT_TOP_PLATE_SIZE.getDoubleValue()));
-    }
-
-    private long computeTaskOverlaySignature(boolean xray, BlockPos currentTaskPos, Set<BlockPos> queuedTaskPositions, Set<BlockPos> missingMaterialPositions) {
-        long sum = xray ? 0x31cb2ad18e5c3f01L : 0x59232765f0aa67bdL;
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_FILLING.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_QUEUED.getColor().intValue);
-        sum = mix64(sum ^ Configs.HIGHLIGHT_COLOR_MISSING_MATERIAL.getColor().intValue);
-        sum = mix64(sum ^ Double.doubleToLongBits(Configs.TASK_OVERLAY_SCALE.getDoubleValue()));
-        sum = mix64(sum ^ (Configs.RENDER_FILLING_ARROW.getBooleanValue() ? 0x101L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_QUEUED_SPINNER.getBooleanValue() ? 0x202L : 0L));
-        sum = mix64(sum ^ (Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue() ? 0x404L : 0L));
-        sum = mix64(sum ^ Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue());
-        if (currentTaskPos != null) {
-            sum = mix64(sum ^ currentTaskPos.asLong());
-        }
-        int count = 0;
-        int maxQueued = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
-        for (BlockPos pos : queuedTaskPositions) {
-            if (pos == null || pos.equals(currentTaskPos)) continue;
-            if (count++ >= maxQueued) break;
-            sum = mix64(sum ^ pos.asLong());
-        }
-        count = 0;
-        int maxMissing = Configs.MAX_QUEUED_RENDER_OVERLAYS.getIntegerValue();
-        for (BlockPos pos : missingMaterialPositions) {
-            if (pos == null) continue;
-            if (count++ >= maxMissing) break;
-            sum = mix64(sum ^ Long.rotateLeft(pos.asLong(), 17));
-        }
-        return sum;
-    }
-
-    private long mix64(long value) {
-        value = (value ^ (value >>> 30)) * 0xbf58476d1ce4e5b9L;
-        value = (value ^ (value >>> 27)) * 0x94d049bb133111ebL;
-        return value ^ (value >>> 31);
-    }
-
-    private void clearRenderCache() {
-        clearChunkRenderCache();
-        clearTaskOverlayCache();
-        cachedHighlightVersion = -1;
-        cachedStyleSignature = EMPTY_SIGNATURE;
-    }
-
-    private void clearChunkRenderCache() {
-        for (ChunkRenderCache cache : chunkCaches.values()) {
-            closeChunkCache(cache);
-        }
-        chunkCaches.clear();
-        desiredChunks.clear();
-        desiredChunkFingerprints.clear();
-        dirtyChunks.clear();
-    }
-
-    private void clearTaskOverlayCache() {
-        if (taskOverlayCache != null) {
-            closeChunkCache(taskOverlayCache);
-            taskOverlayCache = null;
-        }
-        taskOverlaySignature = EMPTY_SIGNATURE;
-        taskOverlayFrame = Long.MIN_VALUE;
-    }
-
-    private void removeChunkCache(ChunkKey key) {
-        ChunkRenderCache cache = chunkCaches.remove(key);
-        if (cache != null) {
-            closeChunkCache(cache);
-        }
-    }
-
-    private void closeChunkCache(ChunkRenderCache cache) {
-        if (cache == null) return;
-
-        closeVertexBuffer(cache.fillVertexBuffer);
-        closeVertexBuffer(cache.lineVertexBuffer);
-    }
-
-    private void closeVertexBuffer(VertexBuffer vertexBuffer) {
-        if (vertexBuffer == null || vertexBuffer.isClosed()) return;
-
-        try {
-            vertexBuffer.close();
-        } catch (Exception e) {
-            LOGGER.warn("Failed to close container highlight render cache", e);
-        }
-    }
+    // ──── Color and state helpers ────
 
     private Color4f getColor(HighlightState type) {
         return switch (type) {
@@ -672,12 +371,6 @@ public class HighlightRenderer {
 
     private boolean isManualState(HighlightState state) {
         return state == HighlightState.MANUAL_COMPLETED || state == HighlightState.MANUAL_NEEDS_FILL;
-    }
-
-    private long highlightEntryHash(BlockPos pos, HighlightState state) {
-        long value = pos.asLong();
-        value ^= ((long) state.ordinal() + 0x9e3779b97f4a7c15L) * 0xbf58476d1ce4e5b9L;
-        return mix64(value);
     }
 
     private void drawManualOverrideBadge(HighlightBox box, HighlightState state, Vec3d cameraPos, BufferBuilder buffer) {
@@ -723,39 +416,6 @@ public class HighlightRenderer {
         return HighlightBox.of(halves[0], halves[1]);
     }
 
-    private record ChunkKey(int x, int z) {
-        static ChunkKey from(BlockPos pos) {
-            return new ChunkKey(pos.getX() >> RENDER_CACHE_REGION_SHIFT, pos.getZ() >> RENDER_CACHE_REGION_SHIFT);
-        }
-    }
-
-    private static final class ChunkUpdate {
-        private final Map<BlockPos, HighlightState> states = new HashMap<>();
-        private long sum = 0L;
-        private long xor = 0L;
-        private int count = 0;
-
-        private void add(BlockPos pos, HighlightState state, long entryHash) {
-            states.put(pos, state);
-            sum += entryHash;
-            xor ^= Long.rotateLeft(entryHash, (int) (entryHash & 63L));
-            count++;
-        }
-
-        private ChunkFingerprint fingerprint() {
-            return new ChunkFingerprint(count, sum, xor);
-        }
-    }
-
-    private record ChunkFingerprint(int count, long sum, long xor) {}
-
-    private record ChunkRenderCache(VertexBuffer fillVertexBuffer, VertexBuffer lineVertexBuffer, double cameraX, double cameraY, double cameraZ) {
-        boolean isEmpty() {
-            return (fillVertexBuffer == null || fillVertexBuffer.isClosed()) &&
-                    (lineVertexBuffer == null || lineVertexBuffer.isClosed());
-        }
-    }
-
     private record HighlightBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
         static HighlightBox single(BlockPos pos) {
             return new HighlightBox(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1.0f, pos.getY() + 1.0f, pos.getZ() + 1.0f);
@@ -772,12 +432,7 @@ public class HighlightRenderer {
             );
         }
 
-        float centerX() {
-            return (minX + maxX) * 0.5f;
-        }
-
-        float centerZ() {
-            return (minZ + maxZ) * 0.5f;
-        }
+        float centerX() { return (minX + maxX) * 0.5f; }
+        float centerZ() { return (minZ + maxZ) * 0.5f; }
     }
 }

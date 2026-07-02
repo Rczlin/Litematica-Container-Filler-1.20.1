@@ -220,7 +220,7 @@ public class ToolHudRenderer {
         if (style == ToolHudStyle.ANCHORED_CARD && targetVisible && updateFrame) {
             updateLayout(client, target, width, height, panelW, panelH, offset, scale, smoothing);
         } else if (drawFixedCard && updateFrame) {
-            updateFixedLayout(width, height, panelW, panelH, smoothing);
+            updateFixedLayout(width, height, panelW, panelH, offset, smoothing);
         } else if ((drawFixedCard && !hasFixedLayout()) || (!drawFixedCard && !hasLayout())) {
             return;
         }
@@ -348,9 +348,9 @@ public class ToolHudRenderer {
         }
     }
 
-    private static void updateFixedLayout(int width, int height, int panelW, int panelH, float smoothing) {
-        float targetX = width * 0.5f + Configs.TOOL_HUD_CUSTOM_X.getIntegerValue();
-        float targetY = height * 0.5f + Configs.TOOL_HUD_CUSTOM_Y.getIntegerValue();
+    private static void updateFixedLayout(int width, int height, int panelW, int panelH, int offset, float smoothing) {
+        float targetX = width * 0.5f + Configs.TOOL_HUD_CUSTOM_X.getIntegerValue() + offset;
+        float targetY = height * 0.5f + Configs.TOOL_HUD_CUSTOM_Y.getIntegerValue() + offset * 0.45f;
         targetX = clamp(targetX, EDGE_MARGIN, Math.max(EDGE_MARGIN, width - panelW - EDGE_MARGIN));
         targetY = clamp(targetY, EDGE_MARGIN, Math.max(EDGE_MARGIN, height - panelH - EDGE_MARGIN));
 
