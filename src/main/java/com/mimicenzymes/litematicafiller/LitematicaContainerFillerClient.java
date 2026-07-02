@@ -5,7 +5,7 @@ import com.mimicenzymes.litematicafiller.gui.GuiConfigs;
 import com.mimicenzymes.litematicafiller.core.*;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolStateMachine;
 import com.mimicenzymes.litematicafiller.network.ClickPacketRateLimiter;
-import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
+import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
 import com.mimicenzymes.litematicafiller.network.TakeItOutCompat;
 
 import fi.dy.masa.malilib.event.InitializationHandler;
@@ -33,7 +33,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        PcaSyncHandler.registerPayloads();
+        ServuxSyncHandler.registerPayloads();
         TakeItOutCompat.registerPayload();
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
