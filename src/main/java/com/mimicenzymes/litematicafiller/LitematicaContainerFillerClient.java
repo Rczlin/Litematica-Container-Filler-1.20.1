@@ -133,8 +133,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
 
     private static void stopActiveWorkForDisabledMod(MinecraftClient client) {
         AutoFillerStateMachine filler = AutoFillerStateMachine.getInstance();
-        if (Configs.WORKING_STATE.getBooleanValue() || !filler.isIdle()) {
-            Configs.WORKING_STATE.setBooleanValue(false);
+        if (!filler.isIdle()) {
             filler.emergencyStop(client);
             workerTickTimer = 0;
         }

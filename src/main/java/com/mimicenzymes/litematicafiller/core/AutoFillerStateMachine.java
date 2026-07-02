@@ -370,7 +370,9 @@ public class AutoFillerStateMachine {
                 return false;
             }
             if (!ensureQueueSpace(client, pos, preferNearby)) return false;
-            taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), true, false));
+            // 当 DATA_SYNC 关闭且不在单机时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
+            boolean canAwaitAsyncData = Configs.ENABLE_DATA_SYNC.getBooleanValue() || client.isInSingleplayer();
+            taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), canAwaitAsyncData, !canAwaitAsyncData));
             RealContainerCache.requestContainerData(pos);
             return true;
         }
