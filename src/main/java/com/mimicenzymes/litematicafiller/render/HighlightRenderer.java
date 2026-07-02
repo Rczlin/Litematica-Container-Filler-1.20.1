@@ -42,13 +42,7 @@ public class HighlightRenderer {
     private static final float MANUAL_BADGE_GAP = 0.014f;
     private static final float MANUAL_BADGE_SIZE = 0.44f;
     private static final float MANUAL_BADGE_THICKNESS = 0.034f;
-    private static final long TASK_ANIMATION_FRAME_INTERVAL_NS = 33_333_333L; // ~30 fps
-    private static final long HIGHLIGHT_ANIMATION_FRAME_INTERVAL_NS = 50_000_000L; // ~20 fps
 
-    private volatile float cachedTaskTime;
-    private volatile float cachedHighlightTime;
-    private long lastTaskTimeUpdate = Long.MIN_VALUE;
-    private long lastHighlightTimeUpdate = Long.MIN_VALUE;
 
     public static HighlightRenderer getInstance() { return INSTANCE; }
 
@@ -103,7 +97,7 @@ public class HighlightRenderer {
             }
 
             if (hasTaskOverlays) {
-                float time = getTaskAnimationTime();
+                float time = (float) (System.nanoTime() / 1_000_000_000.0D);
                 renderTaskOverlays(cameraPos, time, currentTaskPos, queuedTaskPositions, missingMaterialPositions, frustum);
             }
         } catch (Exception e) {
@@ -124,7 +118,7 @@ public class HighlightRenderer {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        float time = getHighlightAnimationTime();
+        float time = (float) (System.nanoTime() / 1_000_000_000.0D);
 
         for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
             HighlightState state = entry.getValue();
@@ -458,24 +452,6 @@ public class HighlightRenderer {
         }
 
         return HighlightBox.of(halves[0], halves[1]);
-    }
-
-    private float getTaskAnimationTime() {
-        long now = System.nanoTime();
-        if (now - lastTaskTimeUpdate >= TASK_ANIMATION_FRAME_INTERVAL_NS) {
-            cachedTaskTime = (float) (now / 1_000_000_000.0D);
-            lastTaskTimeUpdate = now;
-        }
-        return cachedTaskTime;
-    }
-
-    private float getHighlightAnimationTime() {
-        long now = System.nanoTime();
-        if (now - lastHighlightTimeUpdate >= HIGHLIGHT_ANIMATION_FRAME_INTERVAL_NS) {
-            cachedHighlightTime = (float) (now / 1_000_000_000.0D);
-            lastHighlightTimeUpdate = now;
-        }
-        return cachedHighlightTime;
     }
 
     private record HighlightBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
