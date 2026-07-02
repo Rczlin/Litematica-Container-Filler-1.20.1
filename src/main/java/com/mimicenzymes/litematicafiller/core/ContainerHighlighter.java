@@ -18,6 +18,6 @@ public class ContainerHighlighter {
         if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
             return;
         }
-        HighlightRenderer.getInstance().render();
+        HighlightRenderer.getInstance().render(context);
     }
 }

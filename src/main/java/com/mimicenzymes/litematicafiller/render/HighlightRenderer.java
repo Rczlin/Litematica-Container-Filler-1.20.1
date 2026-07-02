@@ -6,6 +6,7 @@ import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.logging.LogUtils;
 import fi.dy.masa.malilib.util.Color4f;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.BufferBuilder;
@@ -14,8 +15,10 @@ import net.minecraft.client.render.GameRenderer;
 import net.minecraft.client.render.Tessellator;
 import net.minecraft.client.render.VertexFormat;
 import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.util.math.MatrixStack;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 
@@ -77,7 +80,7 @@ public class HighlightRenderer {
         Vec3d cameraPos = client.gameRenderer.getCamera().getPos();
 
         try {
-            setupRenderState(xray);
+            setupRenderState(xray, context);
 
             if (anyHighlight) {
                 renderHighlights(highlights, cameraPos);
@@ -90,7 +93,7 @@ public class HighlightRenderer {
         } catch (Exception e) {
             LOGGER.warn("Failed to render container highlights", e);
         } finally {
-            restoreRenderState(xray);
+            restoreRenderState(xray, context);
         }
     }
 
@@ -177,7 +180,7 @@ public class HighlightRenderer {
         }
     }
 
-    private void setupRenderState(boolean xray) {
+    private void setupRenderState(boolean xray, Object context) {
         RenderSystem.enableBlend();
         RenderSystem.defaultBlendFunc();
         RenderSystem.disableCull();
@@ -194,10 +197,23 @@ public class HighlightRenderer {
         RenderSystem.enablePolygonOffset();
         RenderSystem.polygonOffset(-1.2f, -0.2f);
         RenderSystem.setShader(GameRenderer::getPositionColorProgram);
+
+        // In Minecraft 1.20.1, RenderSystem.modelViewStack is NOT automatically
+        // populated with the camera view matrix during WorldRenderer.render().
+        // We need to push the camera rotation from WorldRenderContext.matrixStack()
+        // so the shader applies the correct rotation to our manually-translated
+        // (camera-relative) vertex positions.
+        MatrixStack modelView = RenderSystem.getModelViewStack();
+        modelView.push();
+        modelView.peek().getPositionMatrix().identity();
+        if (context instanceof WorldRenderContext renderContext) {
+            Matrix4f cameraView = renderContext.matrixStack().peek().getPositionMatrix();
+            modelView.peek().getPositionMatrix().mul(cameraView);
+        }
         RenderSystem.applyModelViewMatrix();
     }
 
-    private void restoreRenderState(boolean xray) {
+    private void restoreRenderState(boolean xray, Object context) {
         RenderSystem.polygonOffset(0f, 0f);
         RenderSystem.disablePolygonOffset();
         RenderSystem.lineWidth(1.0F);
@@ -209,6 +225,8 @@ public class HighlightRenderer {
         }
         RenderSystem.enableCull();
         RenderSystem.disableBlend();
+
+        RenderSystem.getModelViewStack().pop();
         RenderSystem.applyModelViewMatrix();
     }
 
