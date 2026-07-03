@@ -53,12 +53,12 @@ public class PcaSyncHandler {
     public static void init() {
         if (initialized) return;
         initialized = true;
-        LOGGER.info("[PCA] Registering channel handlers");
+        LOGGER.info("[LCF DEBUG] [PCA] Registering channel handlers");
 
         ClientPlayNetworking.registerGlobalReceiver(ENABLE_PCA_SYNC_PROTOCOL, (client, handler, buf, responseSender) -> {
             client.execute(() -> {
                 if (!client.isInSingleplayer()) {
-                    LOGGER.info("[PCA] Protocol enabled by server");
+                    LOGGER.info("[LCF DEBUG] [PCA] Protocol enabled by server");
                     enabled = true;
                 }
             });
@@ -66,7 +66,7 @@ public class PcaSyncHandler {
 
         ClientPlayNetworking.registerGlobalReceiver(DISABLE_PCA_SYNC_PROTOCOL, (client, handler, buf, responseSender) -> {
             client.execute(() -> {
-                LOGGER.info("[PCA] Protocol disabled by server");
+                LOGGER.info("[LCF DEBUG] [PCA] Protocol disabled by server");
                 enabled = false;
             });
         });
@@ -99,7 +99,7 @@ public class PcaSyncHandler {
             NbtCompound nbt = buf.readNbt();
             return nbt != null ? new PcaUpdateBlockEntityData(dimension, pos, nbt) : null;
         } catch (Exception e) {
-            LOGGER.error("[PCA] Failed to parse update_block_entity: {}", e.toString());
+            LOGGER.error("[LCF DEBUG] [PCA] Failed to parse update_block_entity: {}", e.toString());
             return null;
         }
     }
@@ -119,7 +119,7 @@ public class PcaSyncHandler {
         Map<Integer, ItemStack> items = extractItemsFromNbt(data.nbt);
         if (items != null && !items.isEmpty()) {
             putIndependentCache(pos, items);
-            LOGGER.info("[PCA] Got {} items for {}", items.size(), pos.toShortString());
+            LOGGER.info("[LCF DEBUG] [PCA] Got {} items for {}", items.size(), pos.toShortString());
         }
     }
 

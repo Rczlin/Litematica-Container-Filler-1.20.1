@@ -99,7 +99,7 @@ public class LitematicaPlacementContainerData {
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[LitematicaFiller] buildSnapshot failed: " + t);
+            System.err.println("[LCF DEBUG] [LitematicaFiller] buildSnapshot failed: " + t);
             t.printStackTrace();
         }
 

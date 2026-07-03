@@ -239,7 +239,7 @@ public class AutoFillerStateMachine {
         if (Configs.DEBUG_MODE.getBooleanValue()) {
             if (debugPhaseStartMs > 0 && oldPhase != Phase.IDLE) {
                 long phaseDuration = now - debugPhaseStartMs;
-                LOGGER.debug("Phase {} took {}ms ({} actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
+                LOGGER.info("[LCF DEBUG] Phase {} took {}ms ({} actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
             }
         }
 
@@ -249,7 +249,7 @@ public class AutoFillerStateMachine {
         this.debugPhaseActionCount = 0;
 
         if (Configs.DEBUG_MODE.getBooleanValue() && newPhase != Phase.IDLE) {
-            LOGGER.debug("Entering phase {}", newPhase.name());
+            LOGGER.info("[LCF DEBUG] Entering phase {}", newPhase.name());
         }
     }
 
@@ -367,7 +367,7 @@ public class AutoFillerStateMachine {
             // 当 DATA_SYNC 关闭且不在单机且 PCA 未启用时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
             boolean canAwaitAsyncData = client.isInSingleplayer()
                     || (Configs.ENABLE_DATA_SYNC.getBooleanValue() && PcaSyncHandler.enabled);
-            LOGGER.info("addTask pos={} canAwait={} (sp={} ds={} pca={})", pos.toShortString(),
+            LOGGER.info("[LCF DEBUG] addTask pos={} canAwait={} (sp={} ds={} pca={})", pos.toShortString(),
                 canAwaitAsyncData, client.isInSingleplayer(),
                 Configs.ENABLE_DATA_SYNC.getBooleanValue(), PcaSyncHandler.enabled);
             taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), canAwaitAsyncData, !canAwaitAsyncData));
@@ -626,7 +626,7 @@ public class AutoFillerStateMachine {
         sendFeedback(client, Text.translatable("litematica_container_filler.message.task_dispatched").getString(), true);
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LOGGER.debug("checkMaterialsAndPrepare took {}ms", System.currentTimeMillis() - stepStartMs);
+            LOGGER.info("[LCF DEBUG] checkMaterialsAndPrepare took {}ms", System.currentTimeMillis() - stepStartMs);
         }
 
         return true;
@@ -638,7 +638,7 @@ public class AutoFillerStateMachine {
         // Debug: print abort with timing
         if (Configs.DEBUG_MODE.getBooleanValue() && currentTask != null && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LOGGER.info("=== Task #{} ABORTED at {} — total {}ms ({})",
+            LOGGER.info("[LCF DEBUG] === Task #{} ABORTED at {} — total {}ms ({})",
                 debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey);
         }
 
@@ -888,13 +888,13 @@ public class AutoFillerStateMachine {
                 debugTaskStartMs = System.currentTimeMillis();
                 debugTaskCount++;
                 if (Configs.DEBUG_MODE.getBooleanValue()) {
-                    LOGGER.debug("=== Task #{} started at {}", debugTaskCount, currentTask.targetPos.toShortString());
+                    LOGGER.info("[LCF DEBUG] === Task #{} started at {}", debugTaskCount, currentTask.targetPos.toShortString());
                 }
 
                 if (currentTask.forcedManual) {
                     changePhase(Phase.INSPECTING);
                 } else if (currentTask.needsInspection) {
-                    LOGGER.info("Entering AWAITING_DATA for {} (PcaEnabled={})", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
+                    LOGGER.info("[LCF DEBUG] Entering AWAITING_DATA for {} (PcaEnabled={})", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
                     changePhase(Phase.AWAITING_DATA);
                     dataWaitTimer = 0;
                 } else {
@@ -929,7 +929,7 @@ public class AutoFillerStateMachine {
                 case AWAITING_DATA:
                     Map<Integer, ItemStack> lateCache = getTrueContainerData(client, currentTask.targetPos);
                     if (lateCache != null) {
-                        LOGGER.info("AWAITING_DATA resolved for {} at tick={}, {} items", currentTask.targetPos.toShortString(), dataWaitTimer, lateCache.size());
+                        LOGGER.info("[LCF DEBUG] AWAITING_DATA resolved for {} at tick={}, {} items", currentTask.targetPos.toShortString(), dataWaitTimer, lateCache.size());
                         QueuePreparationState state = prepareTaskFromData(client, currentTask, lateCache);
                         if (state == QueuePreparationState.SATISFIED) {
                             sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
@@ -944,7 +944,7 @@ public class AutoFillerStateMachine {
                     } else {
                         dataWaitTimer++;
                         if (dataWaitTimer > 20) {
-                            LOGGER.info("AWAITING_DATA timed out for {} after {} ticks, falling back to INSPECTING",
+                            LOGGER.info("[LCF DEBUG] AWAITING_DATA timed out for {} after {} ticks, falling back to INSPECTING",
                                 currentTask.targetPos.toShortString(), dataWaitTimer);
                             changePhase(Phase.INSPECTING);
                         }
@@ -2170,7 +2170,7 @@ public class AutoFillerStateMachine {
         }
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LOGGER.debug("Fill tick took {}ms (moved={}, needsAction={})",
+            LOGGER.info("[LCF DEBUG] Fill tick took {}ms (moved={}, needsAction={})",
                 System.currentTimeMillis() - stepStartMs, movedAny, stillNeedsAction);
         }
     }
@@ -2180,7 +2180,7 @@ public class AutoFillerStateMachine {
 
         if (Configs.DEBUG_MODE.getBooleanValue() && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LOGGER.debug("=== Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
+            LOGGER.info("[LCF DEBUG] === Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
         }
 
         RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);

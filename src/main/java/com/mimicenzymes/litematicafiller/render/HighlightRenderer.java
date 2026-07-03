@@ -101,7 +101,7 @@ public class HighlightRenderer {
                 renderTaskOverlays(cameraPos, time, currentTaskPos, queuedTaskPositions, missingMaterialPositions, frustum);
             }
         } catch (Exception e) {
-            LOGGER.warn("Failed to render container highlights", e);
+            LOGGER.warn("[LCF DEBUG] Failed to render container highlights", e);
         } finally {
             restoreRenderState(xray, renderContext);
         }
