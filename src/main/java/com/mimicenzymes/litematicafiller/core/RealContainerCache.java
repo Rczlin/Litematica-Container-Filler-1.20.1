@@ -3,7 +3,7 @@ package com.mimicenzymes.litematicafiller.core;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.filter.ContainerBlockFilter;
 import com.mimicenzymes.litematicafiller.materials.FillMaterialCalculator;
-import com.mimicenzymes.litematicafiller.network.ServuxSyncHandler;
+import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolStateMachine;
 import fi.dy.masa.litematica.gui.GuiMaterialList;
 import net.minecraft.block.entity.BlockEntity;
@@ -558,8 +558,8 @@ public class RealContainerCache {
                     return combined;
                 }
 
-                Map<Integer, ItemStack> rightServux = ServuxSyncHandler.getCachedData(halves[0]);
-                Map<Integer, ItemStack> leftServux = ServuxSyncHandler.getCachedData(halves[1]);
+                Map<Integer, ItemStack> rightServux = PcaSyncHandler.getCachedData(halves[0]);
+                Map<Integer, ItemStack> leftServux = PcaSyncHandler.getCachedData(halves[1]);
                 combined = combineHalves(rightServux, leftServux);
                 if (combined != null) {
                     if (isEntityInvalidated(halves[0]) || isEntityInvalidated(halves[1])) return null;
@@ -587,7 +587,7 @@ public class RealContainerCache {
             return litematicaData;
         }
 
-        Map<Integer, ItemStack> servuxData = ServuxSyncHandler.getCachedData(pos);
+        Map<Integer, ItemStack> servuxData = PcaSyncHandler.getCachedData(pos);
         if (servuxData != null) {
             if (isEntityInvalidated(pos)) return null;
             rememberSyncedData(pos, servuxData);
@@ -613,7 +613,10 @@ public class RealContainerCache {
 
     public static void requestContainerData(BlockPos pos, long minIntervalMs, boolean preferOpQuery) {
         long now = System.currentTimeMillis();
-        if (!hasActiveConsumers() || pos == null || now - LAST_REQUEST_TIME.getOrDefault(pos, 0L) < minIntervalMs) return;
+        long lastReq = LAST_REQUEST_TIME.getOrDefault(pos, 0L);
+        long elapsed = lastReq == 0 ? minIntervalMs : now - lastReq;
+
+        if (!hasActiveConsumers() || pos == null || elapsed < minIntervalMs) return;
 
         boolean isDouble = false;
         BlockPos[] halves = null;
@@ -636,11 +639,9 @@ public class RealContainerCache {
         if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
             requested |= requestLitematicaData(pos, halves, isDouble);
             if (isDouble) {
-                boolean s1 = ServuxSyncHandler.requestData(halves[0]);
-                boolean s2 = ServuxSyncHandler.requestData(halves[1]);
-                requested |= s1 || s2;
+                requested |= PcaSyncHandler.requestData(halves[0]) | PcaSyncHandler.requestData(halves[1]);
             } else {
-                requested |= ServuxSyncHandler.requestData(pos);
+                requested |= PcaSyncHandler.requestData(pos);
             }
         }
 
@@ -876,7 +877,7 @@ public class RealContainerCache {
         PENDING_NBT_REQUEST_TIME.clear();
         LAST_REQUEST_TIME.clear();
         CONFIRMED_LARGE_BARREL_POSITIONS.clear();
-        ServuxSyncHandler.clearAllCachedData();
+        PcaSyncHandler.clearAllCachedData();
         cacheVersion++;
     }
 
@@ -1076,7 +1077,7 @@ public class RealContainerCache {
         SYNC_SNAPSHOT_TIME.remove(pos);
         NBT_QUERY_CACHE.remove(pos);
         CACHE_TIME.remove(pos);
-        ServuxSyncHandler.clearCachedData(pos);
+        PcaSyncHandler.clearCachedData(pos);
         LAST_REQUEST_TIME.remove(pos);
     }
 
@@ -1121,7 +1122,7 @@ public class RealContainerCache {
             if (half == null) continue;
             BlockPos key = half.toImmutable();
             NBT_QUERY_CACHE.remove(key);
-            ServuxSyncHandler.clearCachedData(key);
+            PcaSyncHandler.clearCachedData(key);
         }
     }
 
@@ -1381,7 +1382,7 @@ public class RealContainerCache {
         if (slotCount != null) return slotCount;
 
         MinecraftClient client = MinecraftClient.getInstance();
-        int externalSlotCount = ServuxSyncHandler.getCachedSlotCount(pos);
+        int externalSlotCount = PcaSyncHandler.getCachedSlotCount(pos);
         if (externalSlotCount > 0) {
             rememberLargeBarrelIfObserved(client, pos, externalSlotCount);
             int best = Math.max(slotCount == null ? -1 : slotCount, externalSlotCount);

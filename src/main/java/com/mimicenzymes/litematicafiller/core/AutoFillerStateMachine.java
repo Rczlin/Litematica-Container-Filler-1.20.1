@@ -1,5 +1,6 @@
 package com.mimicenzymes.litematicafiller.core;
 
+import com.mimicenzymes.litematicafiller.LogUtil;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.config.QuickShulkerOpenMode;
 import com.mimicenzymes.litematicafiller.dependency.DependencyChecker;
@@ -8,6 +9,7 @@ import com.mimicenzymes.litematicafiller.dependency.IShulkerExtractor;
 import com.mimicenzymes.litematicafiller.dependency.QuickShulkerWrapper;
 import com.mimicenzymes.litematicafiller.filter.ContainerBlockFilter;
 import com.mimicenzymes.litematicafiller.network.ClickPacketRateLimiter;
+import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.network.TakeItOutCompat;
 import com.mimicenzymes.litematicafiller.render.HighlightScanner;
 import net.minecraft.block.ShulkerBoxBlock;
@@ -233,13 +235,7 @@ public class AutoFillerStateMachine {
         if (Configs.DEBUG_MODE.getBooleanValue()) {
             if (debugPhaseStartMs > 0 && oldPhase != Phase.IDLE) {
                 long phaseDuration = now - debugPhaseStartMs;
-                MinecraftClient client = MinecraftClient.getInstance();
-                if (client.player != null) {
-                    client.player.sendMessage(Text.literal(
-                        String.format("§8[§bCF Debug§8] §7Phase §e%s §7took §a%dms §7(%d actions)",
-                            oldPhase.name(), phaseDuration, debugPhaseActionCount)),
-                        false);
-                }
+                LogUtil.debug("Phase %s took %dms (%d actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
             }
         }
 
@@ -249,13 +245,7 @@ public class AutoFillerStateMachine {
         this.debugPhaseActionCount = 0;
 
         if (Configs.DEBUG_MODE.getBooleanValue() && newPhase != Phase.IDLE) {
-            MinecraftClient client = MinecraftClient.getInstance();
-            if (client.player != null) {
-                client.player.sendMessage(Text.literal(
-                    String.format("§8[§bCF Debug§8] §7Entering phase §6%s",
-                        newPhase.name())),
-                    false);
-            }
+            LogUtil.debug("Entering phase %s", newPhase.name());
         }
     }
 
@@ -370,8 +360,12 @@ public class AutoFillerStateMachine {
                 return false;
             }
             if (!ensureQueueSpace(client, pos, preferNearby)) return false;
-            // 当 DATA_SYNC 关闭且不在单机时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
-            boolean canAwaitAsyncData = Configs.ENABLE_DATA_SYNC.getBooleanValue() || client.isInSingleplayer();
+            // 当 DATA_SYNC 关闭且不在单机且 PCA 未启用时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
+            boolean canAwaitAsyncData = client.isInSingleplayer()
+                    || (Configs.ENABLE_DATA_SYNC.getBooleanValue() && PcaSyncHandler.enabled);
+            LogUtil.debug("addTask pos=%s canAwait=%s (sp=%s ds=%s pca=%s)", pos.toShortString(),
+                canAwaitAsyncData, client.isInSingleplayer(),
+                Configs.ENABLE_DATA_SYNC.getBooleanValue(), PcaSyncHandler.enabled);
             taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), canAwaitAsyncData, !canAwaitAsyncData));
             RealContainerCache.requestContainerData(pos);
             return true;
@@ -627,12 +621,8 @@ public class AutoFillerStateMachine {
 
         sendFeedback(client, Text.translatable("litematica_container_filler.message.task_dispatched").getString(), true);
 
-        // Debug: material check timing
-        if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0 && client.player != null) {
-            long stepMs = System.currentTimeMillis() - stepStartMs;
-            client.player.sendMessage(Text.literal(
-                String.format("§8[§bCF Debug§8] §7checkMaterialsAndPrepare took §a%dms", stepMs)),
-                false);
+        if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
+            LogUtil.debug("checkMaterialsAndPrepare took %dms", System.currentTimeMillis() - stepStartMs);
         }
 
         return true;
@@ -644,10 +634,8 @@ public class AutoFillerStateMachine {
         // Debug: print abort with timing
         if (Configs.DEBUG_MODE.getBooleanValue() && currentTask != null && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            client.player.sendMessage(Text.literal(
-                String.format("§8[§bCF Debug§8] §c=== Task §a#%d §caborted at §e%s §c- total §a%dms §c(%s)",
-                    debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey)),
-                false);
+            LogUtil.debug("=== Task #%d ABORTED at %s — total %dms (%s)",
+                debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey);
         }
 
         sendFeedback(client, Text.translatable(errorMsgKey).getString(), true);
@@ -893,16 +881,10 @@ public class AutoFillerStateMachine {
                 movesThisTask = 0;
                 cursorStuckAttempts = 0;
 
-                // Debug: task start timing
                 if (Configs.DEBUG_MODE.getBooleanValue()) {
                     debugTaskStartMs = System.currentTimeMillis();
                     debugTaskCount++;
-                    if (client.player != null) {
-                        client.player.sendMessage(Text.literal(
-                            String.format("§8[§bCF Debug§8] §7=== Task §a#%d §7started at §e%s",
-                                debugTaskCount, currentTask.targetPos.toShortString())),
-                            false);
-                    }
+                    LogUtil.debug("=== Task #%d started at %s", debugTaskCount, currentTask.targetPos.toShortString());
                 }
 
                 if (currentTask.forcedManual) {
@@ -941,7 +923,11 @@ public class AutoFillerStateMachine {
             switch (currentPhase) {
                 case AWAITING_DATA:
                     Map<Integer, ItemStack> lateCache = getTrueContainerData(client, currentTask.targetPos);
+                    if (dataWaitTimer == 0) {
+                        LogUtil.debug("AWAITING_DATA start pos=%s (PcaEnabled=%s)", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
+                    }
                     if (lateCache != null) {
+                        LogUtil.debug("AWAITING_DATA resolved at tick=%d, %d items", dataWaitTimer, lateCache.size());
                         QueuePreparationState state = prepareTaskFromData(client, currentTask, lateCache);
                         if (state == QueuePreparationState.SATISFIED) {
                             sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
@@ -2177,28 +2163,18 @@ public class AutoFillerStateMachine {
             }
         }
 
-        // Debug: per-tick fill timing
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            long stepMs = System.currentTimeMillis() - stepStartMs;
-            if (client.player != null) {
-                client.player.sendMessage(Text.literal(
-                    String.format("§8[§bCF Debug§8] §7Fill tick took §a%dms §7(moved=%s, needsAction=%s)",
-                        stepMs, movedAny, stillNeedsAction)),
-                    false);
-            }
+            LogUtil.debug("Fill tick took %dms (moved=%s, needsAction=%s)",
+                System.currentTimeMillis() - stepStartMs, movedAny, stillNeedsAction);
         }
     }
 
     private void finishTaskAndReturn(MinecraftClient client) {
         BlockPos completedPos = currentTask.targetPos.toImmutable();
 
-        // Debug: print total task time
         if (Configs.DEBUG_MODE.getBooleanValue() && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            client.player.sendMessage(Text.literal(
-                String.format("§8[§bCF Debug§8] §7=== Task §a#%d §7completed at §e%s §7- total §a%dms",
-                    debugTaskCount, completedPos.toShortString(), totalMs)),
-                false);
+            LogUtil.debug("=== Task #%d completed at %s — total %dms", debugTaskCount, completedPos.toShortString(), totalMs);
         }
 
         RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);
