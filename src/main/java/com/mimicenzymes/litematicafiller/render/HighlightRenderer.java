@@ -119,6 +119,7 @@ public class HighlightRenderer {
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
         float time = (float) (System.nanoTime() / 1_000_000_000.0D);
+        int vertexCount = 0;
 
         for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
             HighlightState state = entry.getValue();
@@ -134,13 +135,13 @@ public class HighlightRenderer {
             if (renderGlass) {
                 float alphaMultiplier = (float) Configs.HIGHLIGHT_GLASS_ALPHA_MULTIPLIER.getDoubleValue();
                 Color4f glass = new Color4f(base.r, base.g, base.b, Math.min(0.24f, Math.max(0.04f, base.a * alphaMultiplier)));
-                drawInflatedWorldBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ(), 0.012f, glass, cameraPos, buffer);
+                vertexCount += drawInflatedWorldBox(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ(), 0.012f, glass, cameraPos, buffer);
             }
 
             if (renderTopPlate) {
                 Color4f crown = new Color4f(base.r, base.g, base.b, Math.min(0.34f, Math.max(0.12f, base.a * 0.36f)));
                 float inset = Math.max(TOP_PLATE_MIN_INSET, (1.0f - (float) Configs.HIGHLIGHT_TOP_PLATE_SIZE.getDoubleValue()) * 0.5f);
-                drawWorldBox(
+                vertexCount += drawWorldBox(
                         box.minX() + inset, box.maxY() + TOP_PLATE_BOTTOM_OFFSET, box.minZ() + inset,
                         box.maxX() - inset, box.maxY() + TOP_PLATE_TOP_OFFSET, box.maxZ() - inset,
                         crown, cameraPos, buffer
@@ -148,13 +149,19 @@ public class HighlightRenderer {
             }
 
             if (isManualState(state)) {
-                drawManualOverrideBadge(box, state, cameraPos, buffer, time);
+                vertexCount += drawManualOverrideBadge(box, state, cameraPos, buffer, time);
             }
         }
 
-        BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
-        if (builtBuffer != null && !builtBuffer.isEmpty()) {
-            BufferRenderer.drawWithGlobalProgram(builtBuffer);
+        if (vertexCount > 0) {
+            BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+            if (builtBuffer != null && !builtBuffer.isEmpty()) {
+                BufferRenderer.drawWithGlobalProgram(builtBuffer);
+            }
+        } else {
+            // Must call end() to reset the building state, then discard the empty buffer
+            BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+            builtBuffer.release();
         }
     }
 
@@ -165,11 +172,12 @@ public class HighlightRenderer {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+        int vertexCount = 0;
 
         if (Configs.RENDER_FILLING_ARROW.getBooleanValue() && currentTaskPos != null) {
             HighlightBox box = getHighlightBox(currentTaskPos);
             if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
-                drawFillingArrow(box, cameraPos, time, buffer);
+                vertexCount += drawFillingArrow(box, cameraPos, time, buffer);
             }
         }
 
@@ -181,7 +189,7 @@ public class HighlightRenderer {
                 if (count++ >= maxQueued) break;
                 HighlightBox box = getHighlightBox(pos);
                 if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
-                    drawQueuedSpinner(box, cameraPos, time + count * 0.17f, buffer);
+                    vertexCount += drawQueuedSpinner(box, cameraPos, time + count * 0.17f, buffer);
                 }
             }
         }
@@ -194,15 +202,21 @@ public class HighlightRenderer {
                 if (pos != null) {
                     HighlightBox box = getHighlightBox(pos);
                     if (frustum == null || frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
-                        drawMissingMaterialMarker(box, cameraPos, time, buffer);
+                        vertexCount += drawMissingMaterialMarker(box, cameraPos, time, buffer);
                     }
                 }
             }
         }
 
-        BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
-        if (builtBuffer != null && !builtBuffer.isEmpty()) {
-            BufferRenderer.drawWithGlobalProgram(builtBuffer);
+        if (vertexCount > 0) {
+            BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+            if (builtBuffer != null && !builtBuffer.isEmpty()) {
+                BufferRenderer.drawWithGlobalProgram(builtBuffer);
+            }
+        } else {
+            // Must call end() to reset the building state, then discard the empty buffer
+            BufferBuilder.BuiltBuffer builtBuffer = buffer.end();
+            builtBuffer.release();
         }
     }
 
@@ -251,7 +265,7 @@ public class HighlightRenderer {
 
     // ──── Drawing helpers ────
 
-    private void drawFillingArrow(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
+    private int drawFillingArrow(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float cx = box.centerX();
         float cz = box.centerZ();
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
@@ -262,12 +276,14 @@ public class HighlightRenderer {
         Color4f core = new Color4f(0.82f, 1.0f, 0.96f, 0.36f);
         Color4f glow = new Color4f(base.r, base.g, base.b, 0.12f);
 
-        drawVerticalDownArrow(cx, y, cz, 0.24f * scale, 0.62f * scale, 0.080f * scale, body, cameraPos, buffer);
-        drawVerticalDownArrow(cx, y + 0.010f * scale, cz, 0.135f * scale, 0.39f * scale, 0.046f * scale, core, cameraPos, buffer);
-        drawCenteredWorldBox(cx, box.maxY() + 0.045f, cz, (0.24f + pulse * 0.05f) * scale, 0.020f * scale, glow, cameraPos, buffer);
+        int count = 0;
+        count += drawVerticalDownArrow(cx, y, cz, 0.24f * scale, 0.62f * scale, 0.080f * scale, body, cameraPos, buffer);
+        count += drawVerticalDownArrow(cx, y + 0.010f * scale, cz, 0.135f * scale, 0.39f * scale, 0.046f * scale, core, cameraPos, buffer);
+        count += drawCenteredWorldBox(cx, box.maxY() + 0.045f, cz, (0.24f + pulse * 0.05f) * scale, 0.020f * scale, glow, cameraPos, buffer);
+        return count;
     }
 
-    private void drawQueuedSpinner(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
+    private int drawQueuedSpinner(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float cx = box.centerX();
         float cz = box.centerZ();
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
@@ -275,18 +291,20 @@ public class HighlightRenderer {
         float radius = 0.32f * scale;
         Color4f base = Configs.HIGHLIGHT_COLOR_QUEUED.getColor();
 
+        int count = 0;
         for (int i = 0; i < 8; i++) {
             float angle = time * 3.2f + i * ((float) Math.PI / 4.0f);
             float x = cx + (float) Math.cos(angle) * radius;
             float z = cz + (float) Math.sin(angle) * radius;
             float alpha = Math.min(0.70f, base.a * (0.16f + i * 0.055f));
-            drawCenteredWorldBox(x, cy, z, 0.058f * scale, 0.035f * scale, new Color4f(base.r, base.g, base.b, alpha), cameraPos, buffer);
+            count += drawCenteredWorldBox(x, cy, z, 0.058f * scale, 0.035f * scale, new Color4f(base.r, base.g, base.b, alpha), cameraPos, buffer);
         }
 
-        drawCenteredWorldBox(cx, cy, cz, 0.15f * scale, 0.025f * scale, new Color4f(base.r, base.g, base.b, 0.12f), cameraPos, buffer);
+        count += drawCenteredWorldBox(cx, cy, cz, 0.15f * scale, 0.025f * scale, new Color4f(base.r, base.g, base.b, 0.12f), cameraPos, buffer);
+        return count;
     }
 
-    private void drawMissingMaterialMarker(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
+    private int drawMissingMaterialMarker(HighlightBox box, Vec3d cameraPos, float time, BufferBuilder buffer) {
         float scale = (float) Configs.TASK_OVERLAY_SCALE.getDoubleValue();
         float cx = box.centerX();
         float cz = box.centerZ();
@@ -295,12 +313,14 @@ public class HighlightRenderer {
         float pulse = 0.5f + 0.5f * (float) Math.sin(time * 8.0f);
         Color4f color = new Color4f(base.r, base.g, base.b, Math.min(0.82f, base.a * (0.42f + pulse * 0.22f)));
 
-        drawCenteredWorldBox(cx, cy + 0.24f * scale, cz, 0.070f * scale, 0.045f * scale, color, cameraPos, buffer);
-        drawCenteredWorldBox(cx, cy, cz, 0.060f * scale, 0.19f * scale, color, cameraPos, buffer);
-        drawCenteredWorldBox(cx, cy - 0.30f * scale, cz, 0.070f * scale, 0.050f * scale, color, cameraPos, buffer);
+        int count = 0;
+        count += drawCenteredWorldBox(cx, cy + 0.24f * scale, cz, 0.070f * scale, 0.045f * scale, color, cameraPos, buffer);
+        count += drawCenteredWorldBox(cx, cy, cz, 0.060f * scale, 0.19f * scale, color, cameraPos, buffer);
+        count += drawCenteredWorldBox(cx, cy - 0.30f * scale, cz, 0.070f * scale, 0.050f * scale, color, cameraPos, buffer);
+        return count;
     }
 
-    private void drawVerticalDownArrow(float cx, float cy, float cz, float halfWidth, float height, float halfDepth, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
+    private int drawVerticalDownArrow(float cx, float cy, float cz, float halfWidth, float height, float halfDepth, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
         float shaftHalf = halfWidth * 0.26f;
         float shaftTop = cy + height * 0.44f;
         float shaftBottom = cy - height * 0.04f;
@@ -309,15 +329,18 @@ public class HighlightRenderer {
         float[] headXs = {cx - halfWidth, cx + halfWidth, cx};
         float[] headYs = {headTop, headTop, tipY};
 
-        drawWorldBox(cx - shaftHalf, shaftBottom, cz - halfDepth, cx + shaftHalf, shaftTop, cz + halfDepth, color, cameraPos, buffer);
-        drawWorldPrism(headXs, headYs, cz, halfDepth, color, cameraPos, buffer);
+        int count = 0;
+        count += drawWorldBox(cx - shaftHalf, shaftBottom, cz - halfDepth, cx + shaftHalf, shaftTop, cz + halfDepth, color, cameraPos, buffer);
+        count += drawWorldPrism(headXs, headYs, cz, halfDepth, color, cameraPos, buffer);
+        return count;
     }
 
-    private void drawWorldPrism(float[] xs, float[] ys, float cz, float halfDepth, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
-        if (xs.length < 3 || xs.length != ys.length) return;
+    private int drawWorldPrism(float[] xs, float[] ys, float cz, float halfDepth, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
+        if (xs.length < 3 || xs.length != ys.length) return 0;
 
         float frontZ = (float) (cz - halfDepth - cameraPos.z);
         float backZ = (float) (cz + halfDepth - cameraPos.z);
+        int count = 0;
 
         for (int i = 1; i + 1 < xs.length; i++) {
             vertex((float) (xs[0] - cameraPos.x), (float) (ys[0] - cameraPos.y), frontZ, color, buffer);
@@ -329,6 +352,7 @@ public class HighlightRenderer {
             vertex((float) (xs[i + 1] - cameraPos.x), (float) (ys[i + 1] - cameraPos.y), backZ, color, buffer);
             vertex((float) (xs[i] - cameraPos.x), (float) (ys[i] - cameraPos.y), backZ, color, buffer);
             vertex((float) (xs[i] - cameraPos.x), (float) (ys[i] - cameraPos.y), backZ, color, buffer);
+            count += 8;
         }
 
         for (int i = 0; i < xs.length; i++) {
@@ -337,26 +361,28 @@ public class HighlightRenderer {
             vertex((float) (xs[next] - cameraPos.x), (float) (ys[next] - cameraPos.y), frontZ, color, buffer);
             vertex((float) (xs[next] - cameraPos.x), (float) (ys[next] - cameraPos.y), backZ, color, buffer);
             vertex((float) (xs[i] - cameraPos.x), (float) (ys[i] - cameraPos.y), backZ, color, buffer);
+            count += 4;
         }
+        return count;
     }
 
-    private void drawCenteredWorldBox(float cx, float cy, float cz, float halfSize, float halfHeight, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
-        drawWorldBox(
+    private int drawCenteredWorldBox(float cx, float cy, float cz, float halfSize, float halfHeight, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
+        return drawWorldBox(
                 cx - halfSize, cy - halfHeight, cz - halfSize,
                 cx + halfSize, cy + halfHeight, cz + halfSize,
                 color, cameraPos, buffer
         );
     }
 
-    private void drawInflatedWorldBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, float inflate, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
-        drawWorldBox(
+    private int drawInflatedWorldBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, float inflate, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
+        return drawWorldBox(
                 minX - inflate, minY - inflate, minZ - inflate,
                 maxX + inflate, maxY + inflate, maxZ + inflate,
                 color, cameraPos, buffer
         );
     }
 
-    private void drawWorldBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
+    private int drawWorldBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ, Color4f color, Vec3d cameraPos, BufferBuilder buffer) {
         float x1 = (float) (minX - cameraPos.x);
         float y1 = (float) (minY - cameraPos.y);
         float z1 = (float) (minZ - cameraPos.z);
@@ -370,6 +396,7 @@ public class HighlightRenderer {
         vertex(x2, y1, z1, color, buffer); vertex(x2, y1, z2, color, buffer); vertex(x2, y2, z2, color, buffer); vertex(x2, y2, z1, color, buffer);
         vertex(x1, y2, z1, color, buffer); vertex(x2, y2, z1, color, buffer); vertex(x2, y2, z2, color, buffer); vertex(x1, y2, z2, color, buffer);
         vertex(x1, y1, z2, color, buffer); vertex(x2, y1, z2, color, buffer); vertex(x2, y1, z1, color, buffer); vertex(x1, y1, z1, color, buffer);
+        return 24;
     }
 
     private void vertex(float x, float y, float z, Color4f color, BufferBuilder buffer) {
@@ -410,7 +437,7 @@ public class HighlightRenderer {
         return state == HighlightState.MANUAL_COMPLETED || state == HighlightState.MANUAL_NEEDS_FILL;
     }
 
-    private void drawManualOverrideBadge(HighlightBox box, HighlightState state, Vec3d cameraPos, BufferBuilder buffer, float time) {
+    private int drawManualOverrideBadge(HighlightBox box, HighlightState state, Vec3d cameraPos, BufferBuilder buffer, float time) {
         float size = Math.min(box.maxX() - box.minX(), box.maxZ() - box.minZ());
         float cx = box.centerX();
         float cz = box.centerZ();
@@ -425,18 +452,20 @@ public class HighlightRenderer {
                 ? new Color4f(0.16f, 1.0f, 0.62f, 0.90f)
                 : new Color4f(1.0f, 0.52f, 0.12f, 0.90f);
 
-        drawWorldBox(cx - half, y, cz - half, cx + half, y + thickness, cz - half + thickness, ring, cameraPos, buffer);
-        drawWorldBox(cx - half, y, cz + half - thickness, cx + half, y + thickness, cz + half, ring, cameraPos, buffer);
-        drawWorldBox(cx - half, y, cz - half, cx - half + thickness, y + thickness, cz + half, ring, cameraPos, buffer);
-        drawWorldBox(cx + half - thickness, y, cz - half, cx + half, y + thickness, cz + half, ring, cameraPos, buffer);
+        int count = 0;
+        count += drawWorldBox(cx - half, y, cz - half, cx + half, y + thickness, cz - half + thickness, ring, cameraPos, buffer);
+        count += drawWorldBox(cx - half, y, cz + half - thickness, cx + half, y + thickness, cz + half, ring, cameraPos, buffer);
+        count += drawWorldBox(cx - half, y, cz - half, cx - half + thickness, y + thickness, cz + half, ring, cameraPos, buffer);
+        count += drawWorldBox(cx + half - thickness, y, cz - half, cx + half, y + thickness, cz + half, ring, cameraPos, buffer);
 
         if (state == HighlightState.MANUAL_COMPLETED) {
-            drawWorldBox(cx - half * 0.48f, y + thickness, cz - thickness * 0.5f, cx - half * 0.08f, y + thickness * 2.0f, cz + thickness * 0.5f, accent, cameraPos, buffer);
-            drawWorldBox(cx - half * 0.12f, y + thickness, cz - thickness * 0.5f, cx + half * 0.56f, y + thickness * 2.0f, cz + thickness * 0.5f, accent, cameraPos, buffer);
+            count += drawWorldBox(cx - half * 0.48f, y + thickness, cz - thickness * 0.5f, cx - half * 0.08f, y + thickness * 2.0f, cz + thickness * 0.5f, accent, cameraPos, buffer);
+            count += drawWorldBox(cx - half * 0.12f, y + thickness, cz - thickness * 0.5f, cx + half * 0.56f, y + thickness * 2.0f, cz + thickness * 0.5f, accent, cameraPos, buffer);
         } else {
-            drawWorldBox(cx - thickness * 0.5f, y + thickness, cz - half * 0.58f, cx + thickness * 0.5f, y + thickness * 2.0f, cz + half * 0.22f, accent, cameraPos, buffer);
-            drawWorldBox(cx - thickness * 0.6f, y + thickness, cz + half * 0.42f, cx + thickness * 0.6f, y + thickness * 2.0f, cz + half * 0.56f, accent, cameraPos, buffer);
+            count += drawWorldBox(cx - thickness * 0.5f, y + thickness, cz - half * 0.58f, cx + thickness * 0.5f, y + thickness * 2.0f, cz + half * 0.22f, accent, cameraPos, buffer);
+            count += drawWorldBox(cx - thickness * 0.6f, y + thickness, cz + half * 0.42f, cx + thickness * 0.6f, y + thickness * 2.0f, cz + half * 0.56f, accent, cameraPos, buffer);
         }
+        return count;
     }
 
     private HighlightBox getHighlightBox(BlockPos pos) {
