@@ -1,6 +1,5 @@
 package com.mimicenzymes.litematicafiller.network;
 
-import com.mimicenzymes.litematicafiller.LogUtil;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.block.entity.BlockEntity;
@@ -13,6 +12,11 @@ import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import com.mimicenzymes.litematicafiller.Reference;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -23,8 +27,13 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * PCA (PluslsCarpetAddition) sync protocol handler.
+ * Replaces old Servux-based container data sync with PCA protocol.
+ *
+ * Client -> Server: pca:sync_block_entity(BlockPos)
+ * Server -> Client: pca:update_block_entity(dimension, BlockPos, NBT)
  */
 public class PcaSyncHandler {
+    private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
     private static final int MAX_INDEPENDENT_CACHE_SIZE = 1024;
 
     public static final Identifier ENABLE_PCA_SYNC_PROTOCOL  = new Identifier("pca", "enable_pca_sync_protocol");
@@ -36,19 +45,20 @@ public class PcaSyncHandler {
     private static final Map<BlockPos, Integer> SLOT_COUNT_CACHE = new ConcurrentHashMap<>();
 
     private static boolean initialized = false;
-    public static boolean enabled = false;
+    /** True when server has PCA protocol enabled. */
+    public static volatile boolean enabled = false;
 
-    // ---- Initialization ----
+    // ---- Initialization (called from LitematicaContainerFillerClient) ----
 
     public static void init() {
         if (initialized) return;
         initialized = true;
-        LogUtil.info("[PCA] Registering channel handlers");
+        LOGGER.info("[PCA] Registering channel handlers");
 
         ClientPlayNetworking.registerGlobalReceiver(ENABLE_PCA_SYNC_PROTOCOL, (client, handler, buf, responseSender) -> {
             client.execute(() -> {
                 if (!client.isInSingleplayer()) {
-                    LogUtil.info("[PCA] enabled (server sent enable_pca_sync_protocol)");
+                    LOGGER.info("[PCA] Protocol enabled by server");
                     enabled = true;
                 }
             });
@@ -56,7 +66,7 @@ public class PcaSyncHandler {
 
         ClientPlayNetworking.registerGlobalReceiver(DISABLE_PCA_SYNC_PROTOCOL, (client, handler, buf, responseSender) -> {
             client.execute(() -> {
-                LogUtil.info("[PCA] disabled (server sent disable_pca_sync_protocol)");
+                LOGGER.info("[PCA] Protocol disabled by server");
                 enabled = false;
             });
         });
@@ -68,10 +78,12 @@ public class PcaSyncHandler {
             }
         });
 
-        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> enabled = false);
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            enabled = false;
+        });
     }
 
-    // ---- Packet reading ----
+    // ---- Packet reading & caching ----
 
     private static class PcaUpdateBlockEntityData {
         final Identifier dimension;
@@ -85,33 +97,29 @@ public class PcaSyncHandler {
             Identifier dimension = buf.readIdentifier();
             BlockPos pos = buf.readBlockPos();
             NbtCompound nbt = buf.readNbt();
-            if (nbt == null) return null;
-            return new PcaUpdateBlockEntityData(dimension, pos, nbt);
+            return nbt != null ? new PcaUpdateBlockEntityData(dimension, pos, nbt) : null;
         } catch (Exception e) {
-            LogUtil.error("[PCA] Failed to parse update_block_entity: %s", e.getMessage());
+            LOGGER.error("[PCA] Failed to parse update_block_entity: {}", e.toString());
             return null;
         }
     }
 
     private static void handleUpdateBlockEntity(MinecraftClient client, PcaUpdateBlockEntityData data) {
         if (client.world == null) return;
-        Identifier currentDimension = client.world.getRegistryKey().getValue();
-        if (!currentDimension.equals(data.dimension)) return;
+        if (!client.world.getRegistryKey().getValue().equals(data.dimension)) return;
 
         BlockPos pos = data.pos.toImmutable();
-        NbtCompound nbt = data.nbt;
 
-        BlockEntity blockEntity = client.world.getBlockEntity(pos);
-        if (blockEntity != null) {
-            try { blockEntity.readNbt(nbt); } catch (Exception ignored) {}
+        // Update client-side BlockEntity (so MiniHUD etc. also see fresh data)
+        BlockEntity be = client.world.getBlockEntity(pos);
+        if (be != null) {
+            try { be.readNbt(data.nbt); } catch (Exception ignored) {}
         }
 
-        Map<Integer, ItemStack> items = extractItemsFromNbt(nbt);
+        Map<Integer, ItemStack> items = extractItemsFromNbt(data.nbt);
         if (items != null && !items.isEmpty()) {
             putIndependentCache(pos, items);
-            LogUtil.info("[PCA] Received %d items for %s", items.size(), pos.toShortString());
-        } else {
-            LogUtil.debug("[PCA] Received empty container at %s", pos.toShortString());
+            LOGGER.info("[PCA] Got {} items for {}", items.size(), pos.toShortString());
         }
     }
 
@@ -122,9 +130,9 @@ public class PcaSyncHandler {
 
         Map<Integer, ItemStack> items = new HashMap<>();
         for (int i = 0; i < itemsList.size(); i++) {
-            NbtCompound itemTag = itemsList.getCompound(i);
-            int slot = itemTag.getByte("Slot");
-            ItemStack stack = ItemStack.fromNbt(itemTag);
+            NbtCompound tag = itemsList.getCompound(i);
+            int slot = tag.getByte("Slot");
+            ItemStack stack = ItemStack.fromNbt(tag);
             if (!stack.isEmpty()) items.put(slot, stack);
         }
         return items.isEmpty() ? null : items;
@@ -140,9 +148,9 @@ public class PcaSyncHandler {
         checkMinihud();
         if (minihudCacheClass != null) {
             try {
-                for (Field field : minihudCacheMapFields) {
-                    Map<?, ?> map = (Map<?, ?>) field.get(null);
-                    if (map != null) {
+                for (Field f : minihudCacheMapFields) {
+                    Map<?, ?> map = (Map<?, ?>) f.get(null);
+                    if (map != null && map.containsKey(pos)) {
                         Object result = map.get(pos);
                         if (result != null) {
                             rememberSlotCount(pos, result);
@@ -151,11 +159,11 @@ public class PcaSyncHandler {
                         }
                     }
                 }
-                Object cacheInstance = getMinihudCacheInstance();
-                for (Method method : minihudCacheLookupMethods) {
-                    boolean isStatic = java.lang.reflect.Modifier.isStatic(method.getModifiers());
-                    if (!isStatic && cacheInstance == null) continue;
-                    Object result = isStatic ? method.invoke(null, pos) : method.invoke(cacheInstance, pos);
+                Object ci = getMinihudCacheInstance();
+                for (Method m : minihudCacheLookupMethods) {
+                    boolean isStatic = java.lang.reflect.Modifier.isStatic(m.getModifiers());
+                    if (!isStatic && ci == null) continue;
+                    Object result = isStatic ? m.invoke(null, pos) : m.invoke(ci, pos);
                     if (result != null) {
                         rememberSlotCount(pos, result);
                         Map<Integer, ItemStack> extracted = extractItemsFromObject(result);
@@ -168,9 +176,8 @@ public class PcaSyncHandler {
     }
 
     public static int getCachedSlotCount(BlockPos pos) {
-        Integer slotCount = SLOT_COUNT_CACHE.get(pos);
-        if (slotCount != null) return slotCount;
-        return inferSlotCountFromItems(INDEPENDENT_CACHE.get(pos));
+        Integer sc = SLOT_COUNT_CACHE.get(pos);
+        return sc != null ? sc : inferSlotCountFromItems(INDEPENDENT_CACHE.get(pos));
     }
 
     public static void clearCachedData(BlockPos pos) {
@@ -185,62 +192,57 @@ public class PcaSyncHandler {
         SLOT_COUNT_CACHE.clear();
     }
 
-    /**
-     * Request container data via PCA. PCA first, MiniHUD sender as fallback.
-     */
+    /** Attempt to request container data. PCA first, MiniHUD sender as fallback. */
     public static boolean requestData(BlockPos pos) {
         if (ClientPlayNetworking.canSend(SYNC_BLOCK_ENTITY)) {
-            PacketByteBuf sendBuf = new PacketByteBuf(io.netty.buffer.Unpooled.buffer());
-            sendBuf.writeBlockPos(pos);
-            ClientPlayNetworking.send(SYNC_BLOCK_ENTITY, sendBuf);
+            PacketByteBuf buf = new PacketByteBuf(io.netty.buffer.Unpooled.buffer());
+            buf.writeBlockPos(pos);
+            ClientPlayNetworking.send(SYNC_BLOCK_ENTITY, buf);
             return true;
         }
 
         checkMinihud();
         if (minihudSenderClass != null) {
             try {
-                for (Method method : minihudSenderMethods) {
-                    method.invoke(null, pos);
-                    return true;
-                }
+                for (Method m : minihudSenderMethods) { m.invoke(null, pos); return true; }
             } catch (Throwable ignored) {}
         }
         return false;
     }
 
-    // ---- Internal cache management ----
+    // ---- Internal cache ----
 
     private static void putIndependentCache(BlockPos pos, Map<Integer, ItemStack> items) {
-        if (INDEPENDENT_CACHE.size() >= MAX_INDEPENDENT_CACHE_SIZE) {
-            var iterator = INDEPENDENT_CACHE.keySet().iterator();
-            if (iterator.hasNext()) {
-                iterator.remove();
-                SLOT_COUNT_CACHE.remove(iterator.next());
-            }
+        while (INDEPENDENT_CACHE.size() >= MAX_INDEPENDENT_CACHE_SIZE) {
+            var it = INDEPENDENT_CACHE.keySet().iterator();
+            if (!it.hasNext()) break;
+            BlockPos evict = it.next();
+            it.remove();
+            SLOT_COUNT_CACHE.remove(evict);
         }
         INDEPENDENT_CACHE.put(pos, items);
         rememberSlotCount(pos, items);
     }
 
     private static void rememberSlotCount(BlockPos pos, Object inventoryData) {
-        int slotCount = inferSlotCountFromObjectGeneric(inventoryData);
-        if (slotCount > 0) SLOT_COUNT_CACHE.merge(pos, slotCount, Math::max);
+        int n = inferSlotCountFromObjectGeneric(inventoryData);
+        if (n > 0) SLOT_COUNT_CACHE.merge(pos, n, Math::max);
     }
 
-    // ---- Slot count inference ----
+    // ---- Slot count helpers ----
 
     private static int inferSlotCountFromObjectGeneric(Object obj) {
         if (obj == null) return -1;
-        if (obj instanceof Map<?, ?> map) return inferSlotCountFromMap(map);
-        if (obj instanceof java.util.Collection<?> list) return normalizeSlotCount(list.size());
-        if (obj instanceof ItemStack[] arr) return normalizeSlotCount(arr.length);
+        if (obj instanceof Map<?, ?> m) return inferSlotCountFromMap(m);
+        if (obj instanceof java.util.Collection<?> c) return normalizeSlotCount(c.size());
+        if (obj instanceof ItemStack[] a) return normalizeSlotCount(a.length);
         try {
             for (Field f : obj.getClass().getDeclaredFields()) {
                 f.setAccessible(true);
-                Object val = f.get(obj);
-                if (val instanceof java.util.Collection<?> list) { int c = normalizeSlotCount(list.size()); if (c > 0) return c; }
-                if (val instanceof ItemStack[] arr) { int c = normalizeSlotCount(arr.length); if (c > 0) return c; }
-                if (val instanceof Map<?, ?> map) { int c = inferSlotCountFromMap(map); if (c > 0) return c; }
+                Object v = f.get(obj);
+                if (v instanceof java.util.Collection<?> c) { int n = normalizeSlotCount(c.size()); if (n > 0) return n; }
+                if (v instanceof ItemStack[] a) { int n = normalizeSlotCount(a.length); if (n > 0) return n; }
+                if (v instanceof Map<?, ?> m) { int n = inferSlotCountFromMap(m); if (n > 0) return n; }
             }
         } catch (Throwable ignored) {}
         return -1;
@@ -249,7 +251,7 @@ public class PcaSyncHandler {
     private static int inferSlotCountFromMap(Map<?, ?> map) {
         if (map == null || map.isEmpty()) return -1;
         int maxSlot = -1;
-        for (Object key : map.keySet()) { int slot = parseSlotKey(key); if (slot > maxSlot) maxSlot = slot; }
+        for (Object key : map.keySet()) { int s = parseSlotKey(key); if (s > maxSlot) maxSlot = s; }
         return maxSlot < 0 ? -1 : normalizeSlotCount(maxSlot + 1);
     }
 
@@ -266,13 +268,13 @@ public class PcaSyncHandler {
         return -1;
     }
 
-    private static int normalizeSlotCount(int rawCount) {
-        if (rawCount >= 54) return 54;
-        if (rawCount >= 27) return 27;
-        return rawCount > 0 ? rawCount : -1;
+    private static int normalizeSlotCount(int raw) {
+        if (raw >= 54) return 54;
+        if (raw >= 27) return 27;
+        return Math.max(raw, -1);
     }
 
-    // ---- MiniHUD reflection (supplementary) ----
+    // ---- MiniHUD reflection (supplementary, kept for compatibility) ----
 
     private static boolean minihudChecked;
     private static Class<?> minihudCacheClass, minihudSenderClass;
@@ -300,7 +302,7 @@ public class PcaSyncHandler {
             if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) && Map.class.isAssignableFrom(f.getType())) { f.setAccessible(true); mapFields.add(f); }
         }
         for (Method m : minihudCacheClass.getDeclaredMethods()) {
-            if (m.getName().equals("getInstance") && m.getParameterCount() == 0 && java.lang.reflect.Modifier.isStatic(m.getModifiers())) { m.setAccessible(true); minihudCacheInstanceGetter = m; }
+            if ("getInstance".equals(m.getName()) && m.getParameterCount() == 0 && java.lang.reflect.Modifier.isStatic(m.getModifiers())) { m.setAccessible(true); minihudCacheInstanceGetter = m; }
             else if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == BlockPos.class) { m.setAccessible(true); lookupMethods.add(m); }
         }
         minihudCacheMapFields = mapFields.toArray(new Field[0]);
@@ -312,7 +314,9 @@ public class PcaSyncHandler {
         for (Method m : minihudSenderClass.getDeclaredMethods()) {
             if (m.getParameterCount() == 1 && m.getParameterTypes()[0] == BlockPos.class) {
                 String name = m.getName().toLowerCase();
-                if (name.contains("container") || name.contains("inventory") || name.contains("request") || name.contains("data") || name.contains("sync")) { m.setAccessible(true); senderMethods.add(m); }
+                if (name.contains("container") || name.contains("inventory") || name.contains("request") || name.contains("data") || name.contains("sync")) {
+                    m.setAccessible(true); senderMethods.add(m);
+                }
             }
         }
         minihudSenderMethods = senderMethods.toArray(new Method[0]);
@@ -327,14 +331,14 @@ public class PcaSyncHandler {
     private static Map<Integer, ItemStack> extractItemsFromObject(Object obj) {
         if (obj == null) return null;
         Map<Integer, ItemStack> map = new HashMap<>();
-        if (obj instanceof java.util.Collection<?> list) { int slot = 0; for (Object item : list) { if (item instanceof ItemStack stack && !stack.isEmpty()) map.put(slot, stack.copy()); slot++; } if (!map.isEmpty()) return map; }
+        if (obj instanceof java.util.Collection<?> list) { int slot = 0; for (Object item : list) { if (item instanceof ItemStack s && !s.isEmpty()) map.put(slot, s.copy()); slot++; } if (!map.isEmpty()) return map; }
         else if (obj instanceof ItemStack[] arr) { for (int i = 0; i < arr.length; i++) { if (arr[i] != null && !arr[i].isEmpty()) map.put(i, arr[i].copy()); } if (!map.isEmpty()) return map; }
         try {
             for (Field f : obj.getClass().getDeclaredFields()) {
                 f.setAccessible(true);
-                Object val = f.get(obj);
-                if (val instanceof java.util.Collection<?> list) { int slot = 0; for (Object item : list) { if (item instanceof ItemStack stack && !stack.isEmpty()) map.put(slot, stack.copy()); slot++; } if (!map.isEmpty()) return map; }
-                else if (val instanceof ItemStack[] arr) { for (int i = 0; i < arr.length; i++) { if (arr[i] != null && !arr[i].isEmpty()) map.put(i, arr[i].copy()); } if (!map.isEmpty()) return map; }
+                Object v = f.get(obj);
+                if (v instanceof java.util.Collection<?> list) { int slot = 0; for (Object item : list) { if (item instanceof ItemStack s && !s.isEmpty()) map.put(slot, s.copy()); slot++; } if (!map.isEmpty()) return map; }
+                else if (v instanceof ItemStack[] arr) { for (int i = 0; i < arr.length; i++) { if (arr[i] != null && !arr[i].isEmpty()) map.put(i, arr[i].copy()); } if (!map.isEmpty()) return map; }
             }
         } catch (Throwable ignored) {}
         return null;

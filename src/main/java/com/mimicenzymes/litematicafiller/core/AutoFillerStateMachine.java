@@ -1,7 +1,9 @@
 package com.mimicenzymes.litematicafiller.core;
 
-import com.mimicenzymes.litematicafiller.LogUtil;
+import com.mimicenzymes.litematicafiller.Reference;
 import com.mimicenzymes.litematicafiller.config.Configs;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import com.mimicenzymes.litematicafiller.config.QuickShulkerOpenMode;
 import com.mimicenzymes.litematicafiller.dependency.DependencyChecker;
 import com.mimicenzymes.litematicafiller.dependency.DummyExtractor;
@@ -40,6 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class AutoFillerStateMachine {
+
+    private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
 
     public enum Phase {
         IDLE, AWAITING_DATA, INSPECTING, STASHING, GATHERING, FILLING, RETURNING
@@ -235,7 +239,7 @@ public class AutoFillerStateMachine {
         if (Configs.DEBUG_MODE.getBooleanValue()) {
             if (debugPhaseStartMs > 0 && oldPhase != Phase.IDLE) {
                 long phaseDuration = now - debugPhaseStartMs;
-                LogUtil.debug("Phase %s took %dms (%d actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
+                LOGGER.debug("Phase {} took {}ms ({} actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
             }
         }
 
@@ -245,7 +249,7 @@ public class AutoFillerStateMachine {
         this.debugPhaseActionCount = 0;
 
         if (Configs.DEBUG_MODE.getBooleanValue() && newPhase != Phase.IDLE) {
-            LogUtil.debug("Entering phase %s", newPhase.name());
+            LOGGER.debug("Entering phase {}", newPhase.name());
         }
     }
 
@@ -363,7 +367,7 @@ public class AutoFillerStateMachine {
             // 当 DATA_SYNC 关闭且不在单机且 PCA 未启用时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
             boolean canAwaitAsyncData = client.isInSingleplayer()
                     || (Configs.ENABLE_DATA_SYNC.getBooleanValue() && PcaSyncHandler.enabled);
-            LogUtil.debug("addTask pos=%s canAwait=%s (sp=%s ds=%s pca=%s)", pos.toShortString(),
+            LOGGER.info("addTask pos={} canAwait={} (sp={} ds={} pca={})", pos.toShortString(),
                 canAwaitAsyncData, client.isInSingleplayer(),
                 Configs.ENABLE_DATA_SYNC.getBooleanValue(), PcaSyncHandler.enabled);
             taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), canAwaitAsyncData, !canAwaitAsyncData));
@@ -622,7 +626,7 @@ public class AutoFillerStateMachine {
         sendFeedback(client, Text.translatable("litematica_container_filler.message.task_dispatched").getString(), true);
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LogUtil.debug("checkMaterialsAndPrepare took %dms", System.currentTimeMillis() - stepStartMs);
+            LOGGER.debug("checkMaterialsAndPrepare took {}ms", System.currentTimeMillis() - stepStartMs);
         }
 
         return true;
@@ -634,7 +638,7 @@ public class AutoFillerStateMachine {
         // Debug: print abort with timing
         if (Configs.DEBUG_MODE.getBooleanValue() && currentTask != null && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LogUtil.debug("=== Task #%d ABORTED at %s — total %dms (%s)",
+            LOGGER.info("=== Task #{} ABORTED at {} — total {}ms ({})",
                 debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey);
         }
 
@@ -881,15 +885,16 @@ public class AutoFillerStateMachine {
                 movesThisTask = 0;
                 cursorStuckAttempts = 0;
 
+                debugTaskStartMs = System.currentTimeMillis();
+                debugTaskCount++;
                 if (Configs.DEBUG_MODE.getBooleanValue()) {
-                    debugTaskStartMs = System.currentTimeMillis();
-                    debugTaskCount++;
-                    LogUtil.debug("=== Task #%d started at %s", debugTaskCount, currentTask.targetPos.toShortString());
+                    LOGGER.debug("=== Task #{} started at {}", debugTaskCount, currentTask.targetPos.toShortString());
                 }
 
                 if (currentTask.forcedManual) {
                     changePhase(Phase.INSPECTING);
                 } else if (currentTask.needsInspection) {
+                    LOGGER.info("Entering AWAITING_DATA for {} (PcaEnabled={})", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
                     changePhase(Phase.AWAITING_DATA);
                     dataWaitTimer = 0;
                 } else {
@@ -923,11 +928,8 @@ public class AutoFillerStateMachine {
             switch (currentPhase) {
                 case AWAITING_DATA:
                     Map<Integer, ItemStack> lateCache = getTrueContainerData(client, currentTask.targetPos);
-                    if (dataWaitTimer == 0) {
-                        LogUtil.debug("AWAITING_DATA start pos=%s (PcaEnabled=%s)", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
-                    }
                     if (lateCache != null) {
-                        LogUtil.debug("AWAITING_DATA resolved at tick=%d, %d items", dataWaitTimer, lateCache.size());
+                        LOGGER.info("AWAITING_DATA resolved for {} at tick={}, {} items", currentTask.targetPos.toShortString(), dataWaitTimer, lateCache.size());
                         QueuePreparationState state = prepareTaskFromData(client, currentTask, lateCache);
                         if (state == QueuePreparationState.SATISFIED) {
                             sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
@@ -941,7 +943,11 @@ public class AutoFillerStateMachine {
                         checkAndStartGatheringOrFilling(client);
                     } else {
                         dataWaitTimer++;
-                        if (dataWaitTimer > 20) changePhase(Phase.INSPECTING);
+                        if (dataWaitTimer > 20) {
+                            LOGGER.info("AWAITING_DATA timed out for {} after {} ticks, falling back to INSPECTING",
+                                currentTask.targetPos.toShortString(), dataWaitTimer);
+                            changePhase(Phase.INSPECTING);
+                        }
                     }
                     break;
 
@@ -2164,7 +2170,7 @@ public class AutoFillerStateMachine {
         }
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LogUtil.debug("Fill tick took %dms (moved=%s, needsAction=%s)",
+            LOGGER.debug("Fill tick took {}ms (moved={}, needsAction={})",
                 System.currentTimeMillis() - stepStartMs, movedAny, stillNeedsAction);
         }
     }
@@ -2174,7 +2180,7 @@ public class AutoFillerStateMachine {
 
         if (Configs.DEBUG_MODE.getBooleanValue() && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LogUtil.debug("=== Task #%d completed at %s — total %dms", debugTaskCount, completedPos.toShortString(), totalMs);
+            LOGGER.debug("=== Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
         }
 
         RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);
