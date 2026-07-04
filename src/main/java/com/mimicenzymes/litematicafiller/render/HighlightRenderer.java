@@ -25,7 +25,9 @@ import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -42,6 +44,8 @@ public class HighlightRenderer {
     private static final float MANUAL_BADGE_GAP = 0.014f;
     private static final float MANUAL_BADGE_SIZE = 0.44f;
     private static final float MANUAL_BADGE_THICKNESS = 0.034f;
+    private int cachedHighlightVersion = Integer.MIN_VALUE;
+    private RenderCache cachedRenderCache = RenderCache.empty();
 
 
     public static HighlightRenderer getInstance() { return INSTANCE; }
@@ -71,14 +75,7 @@ public class HighlightRenderer {
         boolean renderFilling = Configs.RENDER_FILLING_ARROW.getBooleanValue();
         boolean renderQueued = Configs.RENDER_QUEUED_SPINNER.getBooleanValue();
         boolean renderMissing = Configs.RENDER_MISSING_MATERIAL_MARKER.getBooleanValue();
-
-        BlockPos currentTaskPos = renderFilling ? filler.getCurrentTaskPos() : null;
-        Set<BlockPos> queuedTaskPositions = renderQueued ? filler.getQueuedTaskPositions() : Collections.emptySet();
-        Set<BlockPos> missingMaterialPositions = renderMissing ? filler.getMissingMaterialPositions() : Collections.emptySet();
-
-        boolean hasTaskOverlays = (currentTaskPos != null)
-                || !queuedTaskPositions.isEmpty()
-                || !missingMaterialPositions.isEmpty();
+        boolean hasTaskOverlays = filler.hasRenderableTaskMarkers(renderFilling, renderQueued, renderMissing);
 
         if (!anyHighlight && !hasTaskOverlays) {
             return;
@@ -88,15 +85,20 @@ public class HighlightRenderer {
         Frustum frustum = renderContext.frustum();
         boolean xray = Configs.HIGHLIGHT_XRAY.getBooleanValue();
         Vec3d cameraPos = camera.getPos();
+        RenderCache renderCache = anyHighlight ? getOrBuildRenderCache(highlights) : RenderCache.empty();
 
         try {
             setupRenderState(xray, renderContext);
 
             if (anyHighlight) {
-                renderHighlights(highlights, cameraPos, frustum);
+                float time = (float) (System.nanoTime() / 1_000_000_000.0D);
+                renderHighlights(renderCache, cameraPos, frustum, time);
             }
 
             if (hasTaskOverlays) {
+                BlockPos currentTaskPos = renderFilling ? filler.getCurrentTaskPos() : null;
+                Set<BlockPos> queuedTaskPositions = renderQueued ? filler.getQueuedTaskPositions() : Collections.emptySet();
+                Set<BlockPos> missingMaterialPositions = renderMissing ? filler.getMissingMaterialPositions() : Collections.emptySet();
                 float time = (float) (System.nanoTime() / 1_000_000_000.0D);
                 renderTaskOverlays(cameraPos, time, currentTaskPos, queuedTaskPositions, missingMaterialPositions, frustum);
             }
@@ -107,7 +109,24 @@ public class HighlightRenderer {
         }
     }
 
-    private void renderHighlights(Map<BlockPos, HighlightState> highlights, Vec3d cameraPos, Frustum frustum) {
+    private RenderCache getOrBuildRenderCache(Map<BlockPos, HighlightState> highlights) {
+        int highlightVersion = HighlightScanner.getHighlightVersion();
+        if (highlightVersion == cachedHighlightVersion) {
+            return cachedRenderCache;
+        }
+
+        List<CachedHighlightEntry> entries = new ArrayList<>(highlights.size());
+        for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
+            HighlightBox box = getHighlightBox(entry.getKey());
+            entries.add(new CachedHighlightEntry(entry.getValue(), box, box.toCullingBox(), isManualState(entry.getValue())));
+        }
+
+        cachedHighlightVersion = highlightVersion;
+        cachedRenderCache = new RenderCache(entries);
+        return cachedRenderCache;
+    }
+
+    private void renderHighlights(RenderCache renderCache, Vec3d cameraPos, Frustum frustum, float time) {
         boolean renderGlass = Configs.RENDER_STATE_GLASS.getBooleanValue();
         boolean renderTopPlate = Configs.RENDER_STATE_TOP_PLATE.getBooleanValue();
 
@@ -118,15 +137,14 @@ public class HighlightRenderer {
         Tessellator tessellator = Tessellator.getInstance();
         BufferBuilder buffer = tessellator.getBuffer();
         buffer.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
-        float time = (float) (System.nanoTime() / 1_000_000_000.0D);
         int vertexCount = 0;
 
-        for (Map.Entry<BlockPos, HighlightState> entry : highlights.entrySet()) {
-            HighlightState state = entry.getValue();
+        for (CachedHighlightEntry entry : renderCache.entries()) {
+            HighlightState state = entry.state();
             if (!shouldRenderState(state)) continue;
 
-            HighlightBox box = getHighlightBox(entry.getKey());
-            if (frustum != null && !frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+            HighlightBox box = entry.box();
+            if (frustum != null && !frustum.isVisible(entry.cullingBox())) {
                 continue;
             }
 
@@ -148,7 +166,7 @@ public class HighlightRenderer {
                 );
             }
 
-            if (isManualState(state)) {
+            if (entry.manual()) {
                 vertexCount += drawManualOverrideBadge(box, state, cameraPos, buffer, time);
             }
         }
@@ -483,6 +501,15 @@ public class HighlightRenderer {
         return HighlightBox.of(halves[0], halves[1]);
     }
 
+    private record CachedHighlightEntry(HighlightState state, HighlightBox box, Box cullingBox, boolean manual) {
+    }
+
+    private record RenderCache(List<CachedHighlightEntry> entries) {
+        private static RenderCache empty() {
+            return new RenderCache(Collections.emptyList());
+        }
+    }
+
     private record HighlightBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
         static HighlightBox single(BlockPos pos) {
             return new HighlightBox(pos.getX(), pos.getY(), pos.getZ(), pos.getX() + 1.0f, pos.getY() + 1.0f, pos.getZ() + 1.0f);
@@ -501,5 +528,6 @@ public class HighlightRenderer {
 
         float centerX() { return (minX + maxX) * 0.5f; }
         float centerZ() { return (minZ + maxZ) * 0.5f; }
+        Box toCullingBox() { return new Box(minX, minY, minZ, maxX, maxY, maxZ); }
     }
 }

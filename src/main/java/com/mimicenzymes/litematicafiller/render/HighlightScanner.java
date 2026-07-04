@@ -91,7 +91,6 @@ public class HighlightScanner {
             DATA_REQUEST_QUEUE.remove(pos);
             QUEUED_DATA_REQUESTS.remove(pos);
         }
-        triggerBoost(BOOST_DURATION_TICKS);
     }
 
     public static void onManualOverrideChanged(BlockPos pos, ManualContainerOverrideState state) {
