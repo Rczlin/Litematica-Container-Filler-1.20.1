@@ -207,11 +207,14 @@ public class AreaScanner {
         int fillRadius = Configs.FILL_RADIUS.getIntegerValue();
         boolean syncLayer = Configs.SYNC_LITE_LAYER.getBooleanValue();
         int maxTasks = passThroughScan ? 4 : (isSilentPrinter ? 15 : 40);
-        double reach = mc.player.isCreative() ? 5.0 : 4.5;
-        double reachSq = (reach + 0.5) * (reach + 0.5);
+        double reach = Configs.INTERACTION_REACH.getDoubleValue();
+        if (reach <= 0.0D) {
+            reach = mc.player.isCreative() ? 5.0D : 4.5D;
+        }
+        double reachSq = (reach + 1.0D) * (reach + 1.0D);
         Vec3d eyePos = mc.player.getEyePos();
-        int interactionCandidateRadius = (int) Math.ceil(reach + 2.0);
-        int candidateRadius = fillRadius > 0 ? Math.min(fillRadius, interactionCandidateRadius) : interactionCandidateRadius;
+        int interactionCandidateRadius = (int) Math.ceil(reach) + 3;
+        int candidateRadius = fillRadius > 0 ? fillRadius : interactionCandidateRadius;
         int maxCandidates = passThroughScan ? PASS_THROUGH_CANDIDATE_BUDGET : (isSilentPrinter ? SILENT_CANDIDATE_BUDGET : MANUAL_CANDIDATE_BUDGET);
         List<CandidateSnapshot> candidates = new ArrayList<>();
         Set<BlockPos> processedPositions = new HashSet<>();

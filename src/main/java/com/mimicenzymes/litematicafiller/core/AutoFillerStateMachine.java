@@ -1417,8 +1417,11 @@ public class AutoFillerStateMachine {
     private boolean isTargetReachable(MinecraftClient client, BlockPos pos) {
         if (client.player == null) return false;
 
-        double reach = client.player.isCreative() ? 5.0 : 4.5;
-        double reachSq = (reach + 0.5) * (reach + 0.5);
+        double reach = Configs.INTERACTION_REACH.getDoubleValue();
+        if (reach <= 0.0D) {
+            reach = client.player.isCreative() ? 5.0D : 4.5D;
+        }
+        double reachSq = (reach + 0.5D) * (reach + 0.5D);
         return client.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(pos)) <= reachSq;
     }
 
@@ -2584,7 +2587,10 @@ public class AutoFillerStateMachine {
     private boolean shouldDropQueuedTask(MinecraftClient client, FillTask task) {
         if (task == null || task.forcedManual || client.player == null) return false;
 
-        double reach = client.player.isCreative() ? 5.0 : 4.5;
+        double reach = Configs.INTERACTION_REACH.getDoubleValue();
+        if (reach <= 0.0D) {
+            reach = client.player.isCreative() ? 5.0D : 4.5D;
+        }
         double keepDistance = reach + (isPlayerMovingFast(client) ? 2.0D : 5.0D);
         return client.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(task.targetPos)) > keepDistance * keepDistance;
     }

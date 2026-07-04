@@ -49,6 +49,7 @@ public class Configs implements IConfigHandler {
     public static final ConfigBoolean DEBUG_LOG_SCAN                = new ConfigBoolean("litematica_container_filler.config.name.debugLogScan", true, "litematica_container_filler.config.comment.debugLogScan");
     public static final ConfigOptionList CARPET_LARGE_BARREL_MODE   = new ConfigOptionList("litematica_container_filler.config.name.carpetLargeBarrelMode", CarpetLargeBarrelMode.OFF, "litematica_container_filler.config.comment.carpetLargeBarrelMode");
     public static final ConfigInteger FILL_RADIUS                   = new ConfigInteger("litematica_container_filler.config.name.fillRadius", 5, 0, 1024, "litematica_container_filler.config.comment.fillRadius");
+    public static final ConfigDouble INTERACTION_REACH              = new ConfigDouble("litematica_container_filler.config.name.interactionReach", 5.0D, 0.0D, 1024.0D, "litematica_container_filler.config.comment.interactionReach");
     public static final ConfigInteger FILL_DELAY                    = new ConfigInteger("litematica_container_filler.config.name.fillDelay", 0, 0, 100, "litematica_container_filler.config.comment.fillDelay");
     public static final ConfigBoolean ENABLE_SAFETY_DELAY           = new ConfigBoolean("litematica_container_filler.config.name.enableSafetyDelay", true, "litematica_container_filler.config.comment.enableSafetyDelay");
     public static final ConfigBoolean ENABLE_FILL_STATE_PROTECTION  = new ConfigBoolean("litematica_container_filler.config.name.enableFillStateProtection", true, "litematica_container_filler.config.comment.enableFillStateProtection");
@@ -161,6 +162,7 @@ public class Configs implements IConfigHandler {
                 ENABLE_MOD,
                 WORKING_STATE,
                 FILL_RADIUS,
+                INTERACTION_REACH,
                 FILL_DELAY,
                 ENABLE_SAFETY_DELAY,
                 ENABLE_FILL_STATE_PROTECTION,
