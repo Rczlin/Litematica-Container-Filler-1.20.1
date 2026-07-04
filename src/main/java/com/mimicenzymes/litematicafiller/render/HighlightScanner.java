@@ -29,7 +29,6 @@ public class HighlightScanner {
     private static final int IDLE_UPDATE_INTERVAL_TICKS = 20;
     private static final int BOOSTED_UPDATE_INTERVAL_TICKS = 2;
     private static final int BOOST_DURATION_TICKS = 60;
-    private static final int MAX_DATA_REQUESTS_PER_TICK = 128;
     private static final long UNKNOWN_REQUEST_INTERVAL_MS = 100L;
     private static final long BARREL_ACTIVE_REQUEST_INTERVAL_MS = 250L;
     private static final long BARREL_SATISFIED_REQUEST_INTERVAL_MS = 1000L;
@@ -37,7 +36,6 @@ public class HighlightScanner {
     private static final long ACTIVE_REQUEST_INTERVAL_MS = 750L;
     private static final long SATISFIED_REQUEST_INTERVAL_MS = 4000L;
     private static final long EMPTY_SYNC_CONFIRMATION_MS = 5000L;
-    private static final int MAX_SCHEDULED_HIGHLIGHT_UPDATES_PER_TICK = 96;
     private static final Map<BlockPos, HighlightState> HIGHLIGHT_MAP = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Map<Integer, ItemStack>> SCHEMATIC_REQ_CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> SCHEMATIC_IGNORED_SLOT_CACHE = new ConcurrentHashMap<>();
@@ -446,7 +444,8 @@ public class HighlightScanner {
         boolean anyHighlightChanged = false;
         int processed = 0;
 
-        while (processed < MAX_SCHEDULED_HIGHLIGHT_UPDATES_PER_TICK) {
+        int maxScheduledUpdates = Configs.HIGHLIGHT_SCAN_BUDGET.getIntegerValue();
+        while (processed < maxScheduledUpdates) {
             BlockPos renderPos = scanPass.nextRenderPosition(schematicWorld);
             if (renderPos == null) {
                 anyHighlightChanged |= removeHighlightsMissingFromScan(scanPass.seenRenderPositions);
@@ -790,7 +789,8 @@ public class HighlightScanner {
     private static void pumpDataRequests(long now) {
         int sent = 0;
 
-        while (sent < MAX_DATA_REQUESTS_PER_TICK && !DATA_REQUEST_QUEUE.isEmpty()) {
+        int maxDataRequests = Configs.HIGHLIGHT_DATA_REQUEST_BUDGET.getIntegerValue();
+        while (sent < maxDataRequests && !DATA_REQUEST_QUEUE.isEmpty()) {
             BlockPos key = DATA_REQUEST_QUEUE.poll();
             QUEUED_DATA_REQUESTS.remove(key);
 
