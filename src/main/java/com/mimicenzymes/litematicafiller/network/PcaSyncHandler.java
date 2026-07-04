@@ -15,9 +15,6 @@ import net.minecraft.nbt.NbtList;
 import net.minecraft.network.PacketByteBuf;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -26,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
+import com.mimicenzymes.litematicafiller.log.DebugCategory;
+import static com.mimicenzymes.litematicafiller.log.LcfLogger.*;
 
 /**
  * PCA (PluslsCarpetAddition) sync protocol handler.
@@ -34,7 +33,6 @@ import com.mimicenzymes.litematicafiller.config.Configs;
  * Server -> Client: pca:update_block_entity(dimension, BlockPos, NBT)
  */
 public class PcaSyncHandler {
-    private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
     private static final int MAX_UPDATES_PER_TICK = 128;
     private static final long REQUEST_TIMEOUT_TICKS = 20L;
 
@@ -69,7 +67,7 @@ public class PcaSyncHandler {
     public static void init() {
         if (initialized) return;
         initialized = true;
-        LOGGER.info("[LCF DEBUG] [PCA] Scheduling compatible channel handlers");
+        debug(DebugCategory.PCA, "Scheduling compatible channel handlers");
 
         ClientLifecycleEvents.CLIENT_STARTED.register(client -> installReceiverWrappers());
 
@@ -231,7 +229,7 @@ public class PcaSyncHandler {
             return;
         }
 
-        LOGGER.info("[LCF DEBUG] [PCA] Installing compatible receiver wrappers");
+        debug(DebugCategory.PCA, "Installing compatible receiver wrappers");
 
         externalEnableReceiver = ClientPlayNetworking.unregisterGlobalReceiver(ENABLE_PCA_SYNC_PROTOCOL);
         externalDisableReceiver = ClientPlayNetworking.unregisterGlobalReceiver(DISABLE_PCA_SYNC_PROTOCOL);
@@ -243,7 +241,7 @@ public class PcaSyncHandler {
 
         receiversInstalled = enableInstalled && disableInstalled && updateInstalled;
         if (!receiversInstalled) {
-            LOGGER.warn("[LCF DEBUG] [PCA] Failed to install one or more compatible receiver wrappers");
+            warn(DebugCategory.PCA, "Failed to install one or more compatible receiver wrappers");
         }
     }
 
@@ -254,7 +252,7 @@ public class PcaSyncHandler {
                 dispatchReceivers(externalReceiver, internalReceiver, client, handler, buf, responseSender));
 
         if (!registered) {
-            LOGGER.warn("[LCF DEBUG] [PCA] Failed to register wrapper for {}", channel);
+            warn(DebugCategory.PCA, "Failed to register wrapper for {}", channel);
             if (externalReceiver != null) {
                 ClientPlayNetworking.registerGlobalReceiver(channel, externalReceiver);
             }
@@ -262,9 +260,9 @@ public class PcaSyncHandler {
         }
 
         if (externalReceiver != null) {
-            LOGGER.info("[LCF DEBUG] [PCA] Wrapped existing receiver for {}", channel);
+            debug(DebugCategory.PCA, "Wrapped existing receiver for {}", channel);
         } else {
-            LOGGER.info("[LCF DEBUG] [PCA] Registered standalone receiver for {}", channel);
+            debug(DebugCategory.PCA, "Registered standalone receiver for {}", channel);
         }
 
         return true;
@@ -294,7 +292,7 @@ public class PcaSyncHandler {
         try {
             receiver.receive(client, handler, copy, responseSender);
         } catch (Exception e) {
-            LOGGER.error("[LCF DEBUG] [PCA] {} receiver dispatch failed: {}", receiverType, e.toString());
+            error(DebugCategory.PCA, "{} receiver dispatch failed: {}", receiverType, e.toString());
         } finally {
             copy.release();
         }
@@ -303,7 +301,7 @@ public class PcaSyncHandler {
     private static void handleEnablePacket(MinecraftClient client) {
         client.execute(() -> {
             if (!client.isInSingleplayer()) {
-                LOGGER.info("[LCF DEBUG] [PCA] Protocol enabled by server");
+                debug(DebugCategory.PCA, "Protocol enabled by server");
                 enabled = true;
             }
         });
@@ -311,7 +309,7 @@ public class PcaSyncHandler {
 
     private static void handleDisablePacket(MinecraftClient client) {
         client.execute(() -> {
-            LOGGER.info("[LCF DEBUG] [PCA] Protocol disabled by server");
+            debug(DebugCategory.PCA, "Protocol disabled by server");
             enabled = false;
             clearPendingUpdates();
         });
@@ -349,7 +347,7 @@ public class PcaSyncHandler {
             Map<Integer, ItemStack> items = extractItemsFromNbt(nbt);
             return new PcaUpdateBlockEntityData(dimension, pos, items, inferSlotCountFromItems(items));
         } catch (Exception e) {
-            LOGGER.error("[LCF DEBUG] [PCA] Failed to parse update_block_entity: {}", e.toString());
+            error(DebugCategory.PCA, "Failed to parse update_block_entity: {}", e.toString());
             return null;
         }
     }
@@ -372,7 +370,7 @@ public class PcaSyncHandler {
         int slotCount = inferSlotCountFromUpdate(client, pos, data.slotCountHint);
         if (items != null && (slotCount > 0 || !items.isEmpty())) {
             RealContainerCache.acceptExternalContainerData(pos, items, slotCount);
-            LOGGER.info("[LCF DEBUG] [PCA] Got {} items for {}", items.size(), pos.toShortString());
+            debug(DebugCategory.PCA, "Got {} items for {}", items.size(), pos.toShortString());
         }
     }
 

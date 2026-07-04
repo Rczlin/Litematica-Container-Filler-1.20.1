@@ -2,8 +2,8 @@ package com.mimicenzymes.litematicafiller.core;
 
 import com.mimicenzymes.litematicafiller.Reference;
 import com.mimicenzymes.litematicafiller.config.Configs;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import com.mimicenzymes.litematicafiller.log.DebugCategory;
+import static com.mimicenzymes.litematicafiller.log.LcfLogger.*;
 import com.mimicenzymes.litematicafiller.config.QuickShulkerOpenMode;
 import com.mimicenzymes.litematicafiller.dependency.DependencyChecker;
 import com.mimicenzymes.litematicafiller.dependency.DummyExtractor;
@@ -43,7 +43,6 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class AutoFillerStateMachine {
 
-    private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
 
     public enum Phase {
         IDLE, AWAITING_DATA, INSPECTING, STASHING, GATHERING, FILLING, RETURNING
@@ -209,6 +208,30 @@ public class AutoFillerStateMachine {
         this.shulkerExtractor = DependencyChecker.HAS_QUICK_SHULKER ? new QuickShulkerWrapper() : new DummyExtractor();
     }
 
+    private static String debugScreenName(MinecraftClient client) {
+        if (client == null || client.currentScreen == null) return "null";
+        return client.currentScreen.getClass().getSimpleName();
+    }
+
+    private void debugFillingTickState(MinecraftClient client, String reason) {
+        if (!Configs.DEBUG_MODE.getBooleanValue() || currentPhase != Phase.FILLING || currentTask == null) return;
+
+        ScreenHandler handler = client.player != null ? client.player.currentScreenHandler : null;
+        boolean inGui = client.player != null && handler != null && handler != client.player.playerScreenHandler;
+        debug(DebugCategory.PERF,
+            "FILLING tick={} reason={} pos={} inGui={} guiOpened={} wait={} queue={} pendingPackets={} yield={} screen={}",
+            tickCounter,
+            reason,
+            currentTask.targetPos.toShortString(),
+            inGui,
+            guiOpenedForPhase,
+            actionWaitTicks,
+            actionQueue.size(),
+            ClickPacketRateLimiter.hasPendingPackets(),
+            yieldTick,
+            debugScreenName(client));
+    }
+
     private static Iterable<ItemStack> containerStacksFromNbt(NbtCompound blockEntityTag) {
         if (blockEntityTag == null || !blockEntityTag.contains("Items")) return List.of();
         NbtList itemsList = blockEntityTag.getList("Items", 10);
@@ -239,7 +262,7 @@ public class AutoFillerStateMachine {
         if (Configs.DEBUG_MODE.getBooleanValue()) {
             if (debugPhaseStartMs > 0 && oldPhase != Phase.IDLE) {
                 long phaseDuration = now - debugPhaseStartMs;
-                LOGGER.info("[LCF DEBUG] Phase {} took {}ms ({} actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
+                debug(DebugCategory.FILL_PHASE, "Phase {} took {}ms ({} actions)", oldPhase.name(), phaseDuration, debugPhaseActionCount);
             }
         }
 
@@ -249,7 +272,7 @@ public class AutoFillerStateMachine {
         this.debugPhaseActionCount = 0;
 
         if (Configs.DEBUG_MODE.getBooleanValue() && newPhase != Phase.IDLE) {
-            LOGGER.info("[LCF DEBUG] Entering phase {}", newPhase.name());
+            debug(DebugCategory.FILL_PHASE, "Entering phase {}", newPhase.name());
         }
     }
 
@@ -367,7 +390,7 @@ public class AutoFillerStateMachine {
             // 当 DATA_SYNC 关闭且不在单机且 PCA 未启用时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
             boolean canAwaitAsyncData = client.isInSingleplayer()
                     || (Configs.ENABLE_DATA_SYNC.getBooleanValue() && PcaSyncHandler.enabled);
-            LOGGER.info("[LCF DEBUG] addTask pos={} canAwait={} (sp={} ds={} pca={})", pos.toShortString(),
+            debug(DebugCategory.FILL_TASK, "addTask pos={} canAwait={} (sp={} ds={} pca={})", pos.toShortString(),
                 canAwaitAsyncData, client.isInSingleplayer(),
                 Configs.ENABLE_DATA_SYNC.getBooleanValue(), PcaSyncHandler.enabled);
             taskQueue.add(new FillTask(pos, requiredItems, new HashMap<>(), canAwaitAsyncData, !canAwaitAsyncData));
@@ -626,7 +649,7 @@ public class AutoFillerStateMachine {
         sendFeedback(client, Text.translatable("litematica_container_filler.message.task_dispatched").getString(), true);
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LOGGER.info("[LCF DEBUG] checkMaterialsAndPrepare took {}ms", System.currentTimeMillis() - stepStartMs);
+            debug(DebugCategory.PERF, "checkMaterialsAndPrepare took {}ms", System.currentTimeMillis() - stepStartMs);
         }
 
         return true;
@@ -638,7 +661,7 @@ public class AutoFillerStateMachine {
         // Debug: print abort with timing
         if (Configs.DEBUG_MODE.getBooleanValue() && currentTask != null && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LOGGER.info("[LCF DEBUG] === Task #{} ABORTED at {} — total {}ms ({})",
+            debug(DebugCategory.FILL_TASK, "=== Task #{} ABORTED at {} — total {}ms ({})",
                 debugTaskCount, currentTask.targetPos.toShortString(), totalMs, errorMsgKey);
         }
 
@@ -868,9 +891,14 @@ public class AutoFillerStateMachine {
             }
         }
 
-        if (actionWaitTicks > 0) { actionWaitTicks--; return; }
+        if (actionWaitTicks > 0) {
+            debugFillingTickState(client, "action-wait");
+            actionWaitTicks--;
+            return;
+        }
 
         if (ClickPacketRateLimiter.hasPendingPackets()) {
+            debugFillingTickState(client, "packet-rate-limit");
             return;
         }
 
@@ -888,13 +916,13 @@ public class AutoFillerStateMachine {
                 debugTaskStartMs = System.currentTimeMillis();
                 debugTaskCount++;
                 if (Configs.DEBUG_MODE.getBooleanValue()) {
-                    LOGGER.info("[LCF DEBUG] === Task #{} started at {}", debugTaskCount, currentTask.targetPos.toShortString());
+                    debug(DebugCategory.FILL_TASK, "=== Task #{} started at {}", debugTaskCount, currentTask.targetPos.toShortString());
                 }
 
                 if (currentTask.forcedManual) {
                     changePhase(Phase.INSPECTING);
                 } else if (currentTask.needsInspection) {
-                    LOGGER.info("[LCF DEBUG] Entering AWAITING_DATA for {} (PcaEnabled={})", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
+                    debug(DebugCategory.FILL_PHASE, "Entering AWAITING_DATA for {} (PcaEnabled={})", currentTask.targetPos.toShortString(), PcaSyncHandler.enabled);
                     changePhase(Phase.AWAITING_DATA);
                     dataWaitTimer = 0;
                 } else {
@@ -911,7 +939,12 @@ public class AutoFillerStateMachine {
         yieldTick = false;
         int actionsThisTick = 0;
         while (!actionQueue.isEmpty() && actionWaitTicks <= 0 && !yieldTick) {
+            long actionStart = System.nanoTime();
             actionQueue.poll().run();
+            long actionElapsedUs = (System.nanoTime() - actionStart) / 1000L;
+            if (actionElapsedUs > 500) { // log only slow actions (>0.5ms)
+                debug(DebugCategory.PERF, "Slow action #{} took {}μs ({}ms)", actionsThisTick, actionElapsedUs, actionElapsedUs / 1000L);
+            }
             if (!yieldTick) watchdogTimer = 0;
             actionsThisTick++;
             if (Configs.DEBUG_MODE.getBooleanValue()) debugPhaseActionCount++;
@@ -929,7 +962,7 @@ public class AutoFillerStateMachine {
                 case AWAITING_DATA:
                     Map<Integer, ItemStack> lateCache = getTrueContainerData(client, currentTask.targetPos);
                     if (lateCache != null) {
-                        LOGGER.info("[LCF DEBUG] AWAITING_DATA resolved for {} at tick={}, {} items", currentTask.targetPos.toShortString(), dataWaitTimer, lateCache.size());
+                        debug(DebugCategory.FILL_PHASE, "AWAITING_DATA resolved for {} at tick={}, {} items", currentTask.targetPos.toShortString(), dataWaitTimer, lateCache.size());
                         QueuePreparationState state = prepareTaskFromData(client, currentTask, lateCache);
                         if (state == QueuePreparationState.SATISFIED) {
                             sendFeedback(client, Text.translatable("litematica_container_filler.message.already_satisfied").getString(), true);
@@ -944,7 +977,7 @@ public class AutoFillerStateMachine {
                     } else {
                         dataWaitTimer++;
                         if (dataWaitTimer > 20) {
-                            LOGGER.info("[LCF DEBUG] AWAITING_DATA timed out for {} after {} ticks, falling back to INSPECTING",
+                            debug(DebugCategory.FILL_PHASE, "AWAITING_DATA timed out for {} after {} ticks, falling back to INSPECTING",
                                 currentTask.targetPos.toShortString(), dataWaitTimer);
                             changePhase(Phase.INSPECTING);
                         }
@@ -1006,15 +1039,19 @@ public class AutoFillerStateMachine {
                 case FILLING:
                     if (!inGui) {
                         if (!guiOpenedForPhase) {
+                            debugFillingTickState(client, "dispatch-open-target");
                             openTargetContainer(client, currentTask.targetPos);
                             guiOpenedForPhase = true;
                         } else if (passiveScreenOpen) {
+                            debugFillingTickState(client, "passive-screen-open");
                             yieldTick = true;
                         } else {
+                            debugFillingTickState(client, "user-aborted-no-gui");
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
                         guiOpenedForPhase = true;
+                        debugFillingTickState(client, "gui-ready");
                         if (!silentlyExtracting) {
                             if (currentMapper == null || mappedHandler != currentHandler) {
                                 currentMapper = new SlotMapper(currentHandler, client.player.getInventory());
@@ -1357,18 +1394,24 @@ public class AutoFillerStateMachine {
 
     private void openTargetContainer(MinecraftClient client, BlockPos pos) {
         if (currentTask != null && !currentTask.forcedManual && !isTargetReachable(client, pos)) {
+            debug(DebugCategory.FILL_PHASE, "openTargetContainer skipped unreachable target {}", pos.toShortString());
             AreaScanner.clearAttemptCooldown(pos);
             reset();
             return;
         }
 
+        long openStart = System.nanoTime();
         silentlyExtracting = false;
         BlockHitResult hitResult = new BlockHitResult(new Vec3d(pos.getX()+0.5, pos.getY()+0.5, pos.getZ()+0.5), Direction.UP, pos, false);
         client.interactionManager.interactBlock(client.player, Hand.MAIN_HAND, hitResult);
         currentMapper = null;
         uiWaitTimer = 0;
         actionQueue.add(this::waitForUi);
-        actionQueue.add(() -> actionWaitTicks = getDelay(1));
+        actionQueue.add(() -> {
+            long elapsedUs = (System.nanoTime() - openStart) / 1000L;
+            debug(DebugCategory.PERF, "openTargetContainer {} took {}μs ({}ms)", pos.toShortString(), elapsedUs, elapsedUs / 1000L);
+            actionWaitTicks = getDelay(0);
+        });
     }
 
     private boolean isTargetReachable(MinecraftClient client, BlockPos pos) {
@@ -1380,6 +1423,7 @@ public class AutoFillerStateMachine {
     }
 
     private void openShulkerBox(MinecraftClient client, int slot) {
+        long openStart = System.nanoTime();
         silentlyExtracting = true;
         activeShulkerSlot = slot;
         openedShulkerSlots.add(slot);
@@ -1395,7 +1439,11 @@ public class AutoFillerStateMachine {
         actionQueue.add(() -> openQueuedShulker(client, slot));
         uiWaitTimer = 0;
         actionQueue.add(this::waitForUi);
-        actionQueue.add(() -> actionWaitTicks = getDelay(1));
+        actionQueue.add(() -> {
+            long elapsedUs = (System.nanoTime() - openStart) / 1000L;
+            debug(DebugCategory.PERF, "openShulkerBox slot={} took {}μs ({}ms)", slot, elapsedUs, elapsedUs / 1000L);
+            actionWaitTicks = getDelay(1);
+        });
     }
 
     private void openQueuedShulker(MinecraftClient client, int slot) {
@@ -1556,6 +1604,7 @@ public class AutoFillerStateMachine {
     }
 
     private void doShulkerExtractionPhase(MinecraftClient client) {
+        long extractionStart = System.nanoTime();
         ScreenHandler h = client.player.currentScreenHandler;
         Set<Integer> usedEmptySlots = new HashSet<>();
         List<ItemStack> needed = computeNeededToFetch(client);
@@ -1641,6 +1690,9 @@ public class AutoFillerStateMachine {
                 shulkerMisses.computeIfAbsent(activeShulkerSlot, k -> new HashSet<>()).add(req.getItem());
             }
         }
+
+        long extractionElapsed = (System.nanoTime() - extractionStart) / 1000L;
+        debug(DebugCategory.PERF, "doShulkerExtractionPhase took {}μs ({}ms) for {} items", extractionElapsed, extractionElapsed / 1000L, needed.size());
 
         sendFeedback(client, Text.translatable("litematica_container_filler.message.extraction_done").getString(), true);
         final boolean forceDump = (remainingEmptySlots <= 0);
@@ -1859,8 +1911,24 @@ public class AutoFillerStateMachine {
         abortTask(client, "litematica_container_filler.message.inventory_full_cannot_extract", true, false);
     }
 
+    private boolean isFillLedgerDrained(int containerSize, Set<Integer> ignoredSlots) {
+        if (currentTask == null) return false;
+
+        for (int containerSlot = 0; containerSlot < containerSize; containerSlot++) {
+            if (ignoredSlots.contains(containerSlot)) continue;
+
+            ItemStack reqStack = currentTask.requiredItems.getOrDefault(containerSlot, ItemStack.EMPTY);
+            if (reqStack.isEmpty()) continue;
+            if (currentTask.fillLedger.getOrDefault(containerSlot, 0) > 0) return false;
+        }
+
+        return true;
+    }
+
     private void executeBurstFill(MinecraftClient client, ScreenHandler handler) {
         long stepStartMs = Configs.DEBUG_MODE.getBooleanValue() ? System.currentTimeMillis() : 0;
+        // Track fill tick breakdown: extract/swap vs creative vs player-inv fill
+        long t0 = stepStartMs;
         int syncId = handler.syncId;
         int delay = Configs.ENABLE_SAFETY_DELAY.getBooleanValue() ? Configs.FILL_DELAY.getIntegerValue() : 0;
         boolean dropExtracted = Configs.DROP_EXTRACTED_ITEMS.getBooleanValue();
@@ -2124,6 +2192,18 @@ public class AutoFillerStateMachine {
         }
 
         if (movedAny) {
+            if (delay <= 0
+                    && isCreativeFill
+                    && printedAny
+                    && !swappedAnyInThisPass
+                    && !extractedAnyInThisPass
+                    && handler.getCursorStack().isEmpty()
+                    && isFillLedgerDrained(containerSize, ignoredSlots)) {
+                debug(DebugCategory.PERF, "Creative fill satisfied optimistically in same tick at {}", currentTask.targetPos.toShortString());
+                finishTaskAndReturn(client);
+                return;
+            }
+
             actionWaitTicks = delay;
             consecutiveFailures = 0;
             watchdogTimer = 0;
@@ -2170,7 +2250,7 @@ public class AutoFillerStateMachine {
         }
 
         if (Configs.DEBUG_MODE.getBooleanValue() && stepStartMs > 0) {
-            LOGGER.info("[LCF DEBUG] Fill tick took {}ms (moved={}, needsAction={})",
+            debug(DebugCategory.PERF, "Fill tick took {}ms (moved={}, needsAction={})",
                 System.currentTimeMillis() - stepStartMs, movedAny, stillNeedsAction);
         }
     }
@@ -2180,7 +2260,7 @@ public class AutoFillerStateMachine {
 
         if (Configs.DEBUG_MODE.getBooleanValue() && debugTaskStartMs > 0) {
             long totalMs = System.currentTimeMillis() - debugTaskStartMs;
-            LOGGER.info("[LCF DEBUG] === Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
+            debug(DebugCategory.FILL_TASK, "=== Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
         }
 
         RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);
@@ -2198,28 +2278,31 @@ public class AutoFillerStateMachine {
 
         sendFeedback(client, Text.translatable("litematica_container_filler.message.fill_completed").getString(), true);
 
-        actionQueue.add(() -> closeHandledScreen(client));
-        actionQueue.add(() -> actionWaitTicks = getDelay(1));
-
-        actionQueue.add(() -> {
-            borrowedItems.removeIf(key -> {
-                for (int i = 0; i < 36; i++) {
-                    if (ItemMatcher.isSameItem(client.player.getInventory().getStack(i), key.stack)) return false;
-                }
-                return true;
-            });
-
-            stashedItemCounts.entrySet().removeIf(entry -> entry.getValue() <= 0);
-
-            if (!openedShulkerSlots.isEmpty() && (!borrowedItems.isEmpty() || !stashedItemCounts.isEmpty())) {
-                pendingShulkers.clear();
-                pendingShulkers.addAll(openedShulkerSlots);
-                changePhase(Phase.RETURNING);
-            } else {
-                reset();
+        borrowedItems.removeIf(key -> {
+            for (int i = 0; i < 36; i++) {
+                if (ItemMatcher.isSameItem(client.player.getInventory().getStack(i), key.stack)) return false;
             }
+            return true;
         });
+
+        stashedItemCounts.entrySet().removeIf(entry -> entry.getValue() <= 0);
+        boolean needsReturning = !openedShulkerSlots.isEmpty() && (!borrowedItems.isEmpty() || !stashedItemCounts.isEmpty());
+
+        closeHandledScreen(client);
+
+        if (needsReturning) {
+            guiOpenedForPhase = false;
+            silentlyExtracting = false;
+            activeShulkerSlot = -1;
+            pendingShulkers.clear();
+            pendingShulkers.addAll(openedShulkerSlots);
+            actionWaitTicks = getDelay(1);
+            changePhase(Phase.RETURNING);
+        } else {
+            reset();
+        }
     }
+
 
     private void returnBorrowedAndStashedItems(MinecraftClient client) {
         ScreenHandler h = client.player.currentScreenHandler;
@@ -2289,6 +2372,15 @@ public class AutoFillerStateMachine {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null && client.player.currentScreenHandler == client.player.playerScreenHandler) {
             uiWaitTimer++;
+            if (currentPhase == Phase.FILLING) {
+                debug(DebugCategory.PERF,
+                    "waitForUi phase=FILLING tick={} pos={} uiWaitTimer={} queue={} screen={}",
+                    tickCounter,
+                    currentTask != null ? currentTask.targetPos.toShortString() : "null",
+                    uiWaitTimer,
+                    actionQueue.size(),
+                    debugScreenName(client));
+            }
             if (uiWaitTimer > 20) {
                 if (activeShulkerSlot >= 0) {
                     int uiSlot = getPlayerInventoryMenuSlot(client.player.playerScreenHandler, client, activeShulkerSlot);
@@ -2300,6 +2392,14 @@ public class AutoFillerStateMachine {
             actionQueue.addFirst(this::waitForUi);
             yieldTick = true;
         } else {
+            if (currentPhase == Phase.FILLING && uiWaitTimer > 0) {
+                debug(DebugCategory.PERF,
+                    "waitForUi phase=FILLING resolved at tick={} pos={} waitedTicks={} screen={}",
+                    tickCounter,
+                    currentTask != null ? currentTask.targetPos.toShortString() : "null",
+                    uiWaitTimer,
+                    debugScreenName(client));
+            }
             uiWaitTimer = 0;
         }
     }

@@ -103,6 +103,7 @@ public class GuiConfigs extends GuiConfigsBase {
             case FEATURE -> {
                 Configs.CORE_OPTIONS.forEach(c -> list.add(new ConfigOptionWrapper(c)));
             }
+            case DEBUG -> Configs.DEBUG_OPTIONS.forEach(c -> list.add(new ConfigOptionWrapper(c)));
             case DATA -> Configs.DATA_OPTIONS.forEach(c -> list.add(new ConfigOptionWrapper(c)));
             case LOGISTICS -> Configs.LOGISTICS_OPTIONS.forEach(c -> list.add(new ConfigOptionWrapper(c)));
             case FILTER -> {
@@ -117,7 +118,7 @@ public class GuiConfigs extends GuiConfigsBase {
         return list;
     }
 
-    public enum Tab { FEATURE, LOGISTICS, DATA, FILTER, TOOLS, RENDER, HOTKEYS }
+    public enum Tab { FEATURE, LOGISTICS, DATA, FILTER, TOOLS, RENDER, DEBUG, HOTKEYS }
 
     private static int getListYForTab() {
         return tab == Tab.RENDER || tab == Tab.DATA ? LIST_Y_WITH_EXTRA_BUTTON : LIST_Y_COMPACT;

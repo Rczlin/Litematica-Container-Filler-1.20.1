@@ -3,8 +3,9 @@ package com.mimicenzymes.litematicafiller.render;
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.core.AutoFillerStateMachine;
 import com.mimicenzymes.litematicafiller.core.LitematicaContainerReader;
+import com.mimicenzymes.litematicafiller.log.DebugCategory;
+import static com.mimicenzymes.litematicafiller.log.LcfLogger.*;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.logging.LogUtils;
 import fi.dy.masa.malilib.util.Color4f;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.block.BlockState;
@@ -23,7 +24,6 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
-import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -37,7 +37,6 @@ import java.util.Set;
  */
 public class HighlightRenderer {
     private static final HighlightRenderer INSTANCE = new HighlightRenderer();
-    private static final Logger LOGGER = LogUtils.getLogger();
     private static final float TOP_PLATE_MIN_INSET = 0.02f;
     private static final float TOP_PLATE_BOTTOM_OFFSET = 0.035f;
     private static final float TOP_PLATE_TOP_OFFSET = 0.095f;
@@ -103,7 +102,8 @@ public class HighlightRenderer {
                 renderTaskOverlays(cameraPos, time, currentTaskPos, queuedTaskPositions, missingMaterialPositions, frustum);
             }
         } catch (Exception e) {
-            LOGGER.warn("[LCF DEBUG] Failed to render container highlights", e);
+            // Only log the exception message in warning; full stack trace is at error level
+            warn(DebugCategory.PERF, "Failed to render container highlights: {}", e.toString());
         } finally {
             restoreRenderState(xray, renderContext);
         }

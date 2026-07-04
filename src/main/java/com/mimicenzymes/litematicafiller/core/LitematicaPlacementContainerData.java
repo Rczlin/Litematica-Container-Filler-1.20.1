@@ -8,6 +8,8 @@ import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement;
 import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement.RequiredEnabled;
 import fi.dy.masa.litematica.util.PositionUtils;
 import fi.dy.masa.litematica.util.SchematicUtils;
+import com.mimicenzymes.litematicafiller.log.DebugCategory;
+import static com.mimicenzymes.litematicafiller.log.LcfLogger.*;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.ItemStack;
@@ -99,7 +101,7 @@ public class LitematicaPlacementContainerData {
                 }
             }
         } catch (Throwable t) {
-            System.err.println("[LCF DEBUG] [LitematicaFiller] buildSnapshot failed: " + t);
+            error(DebugCategory.PERF, "buildSnapshot failed: {}", t.toString());
             t.printStackTrace();
         }
 

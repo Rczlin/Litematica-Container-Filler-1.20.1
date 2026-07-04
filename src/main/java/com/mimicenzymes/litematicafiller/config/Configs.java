@@ -42,6 +42,11 @@ public class Configs implements IConfigHandler {
     private static final ConfigBoolean AREA_MODE                    = new ConfigBoolean("litematica_container_filler.config.name.areaMode", false, "litematica_container_filler.config.comment.areaMode");
     private static final ConfigBoolean LEGACY_ENABLE_CARPET_LARGE_BARRELS = new ConfigBoolean("litematica_container_filler.config.name.enableCarpetLargeBarrels", false, "litematica_container_filler.config.comment.enableCarpetLargeBarrels");
     public static final ConfigBoolean DEBUG_MODE                    = new ConfigBoolean("litematica_container_filler.config.name.debugMode", false, "litematica_container_filler.config.comment.debugMode");
+    public static final ConfigBoolean DEBUG_LOG_PCA                 = new ConfigBoolean("litematica_container_filler.config.name.debugLogPca", true, "litematica_container_filler.config.comment.debugLogPca");
+    public static final ConfigBoolean DEBUG_LOG_FILL_TASK           = new ConfigBoolean("litematica_container_filler.config.name.debugLogFillTask", true, "litematica_container_filler.config.comment.debugLogFillTask");
+    public static final ConfigBoolean DEBUG_LOG_FILL_PHASE          = new ConfigBoolean("litematica_container_filler.config.name.debugLogFillPhase", true, "litematica_container_filler.config.comment.debugLogFillPhase");
+    public static final ConfigBoolean DEBUG_LOG_PERF                = new ConfigBoolean("litematica_container_filler.config.name.debugLogPerf", true, "litematica_container_filler.config.comment.debugLogPerf");
+    public static final ConfigBoolean DEBUG_LOG_SCAN                = new ConfigBoolean("litematica_container_filler.config.name.debugLogScan", true, "litematica_container_filler.config.comment.debugLogScan");
     public static final ConfigOptionList CARPET_LARGE_BARREL_MODE   = new ConfigOptionList("litematica_container_filler.config.name.carpetLargeBarrelMode", CarpetLargeBarrelMode.OFF, "litematica_container_filler.config.comment.carpetLargeBarrelMode");
     public static final ConfigInteger FILL_RADIUS                   = new ConfigInteger("litematica_container_filler.config.name.fillRadius", 5, 0, 1024, "litematica_container_filler.config.comment.fillRadius");
     public static final ConfigInteger FILL_DELAY                    = new ConfigInteger("litematica_container_filler.config.name.fillDelay", 0, 0, 100, "litematica_container_filler.config.comment.fillDelay");
@@ -142,6 +147,7 @@ public class Configs implements IConfigHandler {
 
     public static final List<IConfigBase> OPTIONS;
     public static final List<IConfigBase> CORE_OPTIONS;
+    public static final List<IConfigBase> DEBUG_OPTIONS;
     public static final List<IConfigBase> DATA_OPTIONS;
     public static final List<IConfigBase> LOGISTICS_OPTIONS;
     public static final List<IConfigBase> FILTER_OPTIONS;
@@ -161,6 +167,14 @@ public class Configs implements IConfigHandler {
                 CARPET_LARGE_BARREL_MODE,
                 MATERIAL_REPLACEMENTS,
                 DEBUG_MODE
+        );
+
+        DEBUG_OPTIONS = ImmutableList.of(
+                DEBUG_LOG_PCA,
+                DEBUG_LOG_FILL_TASK,
+                DEBUG_LOG_FILL_PHASE,
+                DEBUG_LOG_PERF,
+                DEBUG_LOG_SCAN
         );
 
         DATA_OPTIONS = ImmutableList.of(
@@ -280,6 +294,7 @@ public class Configs implements IConfigHandler {
 
         ImmutableList.Builder<IConfigBase> builder = ImmutableList.builder();
         builder.addAll(CORE_OPTIONS);
+        builder.addAll(DEBUG_OPTIONS);
         builder.addAll(DATA_OPTIONS);
         builder.addAll(LOGISTICS_OPTIONS);
         builder.addAll(FILTER_OPTIONS);
