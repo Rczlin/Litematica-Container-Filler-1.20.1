@@ -48,6 +48,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
 
             if (!com.mimicenzymes.litematicafiller.config.Configs.ENABLE_MOD.getBooleanValue()) {
                 stopActiveWorkForDisabledMod(client);
+                AreaScanner.cancelPendingScan();
                 ClickPacketRateLimiter.reset();
                 updateFillProtectionSnapshot(client);
                 return;
@@ -56,6 +57,8 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
             handleFillStateProtection(client);
 
             if (client.world != null) {
+                PcaSyncHandler.tick(client);
+                AreaScanner.tick(client);
                 AutoFillerStateMachine filler = AutoFillerStateMachine.getInstance();
                 ContainerToolStateMachine tool = ContainerToolStateMachine.getInstance();
                 boolean highlightEnabled = Configs.HIGHLIGHT_CONTAINERS.getBooleanValue();
@@ -101,6 +104,9 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
                     }
                 } else {
                     workerTickTimer = 0;
+                    if (!workEnabled) {
+                        AreaScanner.cancelPendingScan();
+                    }
                 }
             }
         });
@@ -132,6 +138,7 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
     }
 
     private static void stopActiveWorkForDisabledMod(MinecraftClient client) {
+        AreaScanner.cancelPendingScan();
         AutoFillerStateMachine filler = AutoFillerStateMachine.getInstance();
         if (!filler.isIdle()) {
             filler.emergencyStop(client);

@@ -289,6 +289,10 @@ public class HighlightScanner {
         return getCachedSchematicReq(pos, client);
     }
 
+    public static Set<Integer> getCachedIgnoredSlotSnapshot(BlockPos pos, MinecraftClient client) {
+        return getCachedIgnoredSlots(pos, client);
+    }
+
     private static Set<Integer> getCachedIgnoredSlots(BlockPos pos, MinecraftClient client) {
         return SCHEMATIC_IGNORED_SLOT_CACHE.computeIfAbsent(pos.toImmutable(),
                 ignored -> LitematicaContainerReader.getIgnoredSlots(pos));

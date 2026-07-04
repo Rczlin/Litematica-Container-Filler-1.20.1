@@ -159,7 +159,7 @@ public class GuiConfigs extends GuiConfigsBase {
         }
 
         int primaryCount = RealContainerCache.getPrimaryCacheEntryCount();
-        int independentCount = PcaSyncHandler.getIndependentCacheEntryCount();
+        int independentCount = PcaSyncHandler.getPendingUpdateCount();
         int totalCount = RealContainerCache.getTotalCacheEntryCount();
 
         this.dataCacheClearButton.setDisplayString(StringUtils.translate("litematica_container_filler.gui.button.data_cache_clear"));

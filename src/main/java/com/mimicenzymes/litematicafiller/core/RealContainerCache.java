@@ -87,7 +87,7 @@ public class RealContainerCache {
 
     public static int getTotalCacheEntryCount() {
         Set<BlockPos> keys = new HashSet<>(CACHE_TIME.keySet());
-        keys.addAll(PcaSyncHandler.getCachedPositionsSnapshot());
+        keys.addAll(PcaSyncHandler.getPendingPositionsSnapshot());
         return keys.size();
     }
 
@@ -571,15 +571,6 @@ public class RealContainerCache {
                     return combined;
                 }
 
-                Map<Integer, ItemStack> rightServux = PcaSyncHandler.getCachedData(halves[0]);
-                Map<Integer, ItemStack> leftServux = PcaSyncHandler.getCachedData(halves[1]);
-                combined = combineHalves(rightServux, leftServux);
-                if (combined != null) {
-                    if (isEntityInvalidated(halves[0]) || isEntityInvalidated(halves[1])) return null;
-                    rememberSyncedData(halves, combined);
-                    return combined;
-                }
-
                 combined = combineHalves(NBT_QUERY_CACHE.get(halves[0]), NBT_QUERY_CACHE.get(halves[1]));
                 if (combined != null) return combined;
 
@@ -597,13 +588,6 @@ public class RealContainerCache {
             if (isEntityInvalidated(pos)) return null;
             rememberSyncedData(pos, litematicaData);
             return litematicaData;
-        }
-
-        Map<Integer, ItemStack> servuxData = PcaSyncHandler.getCachedData(pos);
-        if (servuxData != null) {
-            if (isEntityInvalidated(pos)) return null;
-            rememberSyncedData(pos, servuxData);
-            return servuxData;
         }
 
         Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
@@ -940,7 +924,7 @@ public class RealContainerCache {
         PENDING_NBT_REQUEST_TIME.clear();
         LAST_REQUEST_TIME.clear();
         CONFIRMED_LARGE_BARREL_POSITIONS.clear();
-        PcaSyncHandler.clearAllCachedData();
+        PcaSyncHandler.clearPendingUpdates();
         cacheVersion++;
     }
 
@@ -1140,7 +1124,7 @@ public class RealContainerCache {
         SYNC_SNAPSHOT_TIME.remove(pos);
         NBT_QUERY_CACHE.remove(pos);
         CACHE_TIME.remove(pos);
-        PcaSyncHandler.clearCachedData(pos);
+        PcaSyncHandler.clearPendingUpdate(pos);
         LAST_REQUEST_TIME.remove(pos);
     }
 
@@ -1185,7 +1169,7 @@ public class RealContainerCache {
             if (half == null) continue;
             BlockPos key = half.toImmutable();
             NBT_QUERY_CACHE.remove(key);
-            PcaSyncHandler.clearCachedData(key);
+            PcaSyncHandler.clearPendingUpdate(key);
         }
     }
 
@@ -1461,14 +1445,6 @@ public class RealContainerCache {
         if (slotCount != null) return slotCount;
 
         MinecraftClient client = MinecraftClient.getInstance();
-        int externalSlotCount = PcaSyncHandler.getCachedSlotCount(pos);
-        if (externalSlotCount > 0) {
-            rememberLargeBarrelIfObserved(client, pos, externalSlotCount);
-            int best = Math.max(slotCount == null ? -1 : slotCount, externalSlotCount);
-            putSlotCount(pos, best);
-            return best;
-        }
-
         int realInventorySlotCount = getRealBlockInventorySlotCount(client, pos);
         if (realInventorySlotCount > 0) {
             rememberLargeBarrelIfObserved(client, pos, realInventorySlotCount);

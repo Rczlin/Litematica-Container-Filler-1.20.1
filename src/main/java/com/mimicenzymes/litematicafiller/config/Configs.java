@@ -9,7 +9,6 @@ import com.mimicenzymes.litematicafiller.filter.ContainerFilterMode;
 import com.mimicenzymes.litematicafiller.filter.ContainerFilterScope;
 import com.mimicenzymes.litematicafiller.gui.GuiConfigs;
 import com.mimicenzymes.litematicafiller.input.InputHandler;
-import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.tool.ContainerClearOutputMode;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolMode;
 import fi.dy.masa.malilib.config.ConfigManager;
@@ -364,7 +363,6 @@ public class Configs implements IConfigHandler {
     public static void saveToFile() {
         INSTANCE.save();
         RealContainerCache.applyConfiguredCacheLimit();
-        PcaSyncHandler.applyConfiguredCacheLimit();
         ConfigManager.getInstance().onConfigsChanged(Reference.MOD_ID);
     }
 
