@@ -2,6 +2,8 @@ package com.mimicenzymes.litematicafiller.gui;
 
 import com.mimicenzymes.litematicafiller.Reference;
 import com.mimicenzymes.litematicafiller.config.Configs;
+import com.mimicenzymes.litematicafiller.core.RealContainerCache;
+import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.config.Hotkeys;
 import com.mimicenzymes.litematicafiller.core.ManualContainerOverrideManager;
 import fi.dy.masa.malilib.config.IConfigBase;
@@ -20,8 +22,10 @@ import fi.dy.masa.malilib.gui.button.ButtonBase;
 import fi.dy.masa.malilib.gui.button.ConfigButtonKeybind;
 import fi.dy.masa.malilib.gui.button.ButtonGeneric;
 import fi.dy.masa.malilib.gui.button.IButtonActionListener;
+import fi.dy.masa.malilib.util.StringUtils;
 import net.minecraft.text.Text;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 
 import java.util.ArrayList;
@@ -33,6 +37,10 @@ public class GuiConfigs extends GuiConfigsBase {
     private static final int LIST_Y_WITH_EXTRA_BUTTON = 74;
     private static final int LIST_BOTTOM_MARGIN = 6;
     private static Tab tab = Tab.FEATURE;
+    private ButtonGeneric dataCacheClearButton;
+    private ButtonGeneric dataPrimaryCacheButton;
+    private ButtonGeneric dataIndependentCacheButton;
+    private ButtonGeneric dataTotalCacheButton;
 
     public GuiConfigs(Screen parent) {
         super(LIST_X, getListYForTab(), Reference.MOD_ID, parent, "litematica_container_filler.gui.title.configs");
@@ -47,6 +55,10 @@ public class GuiConfigs extends GuiConfigsBase {
         this.setListPosition(LIST_X, getListYForTab());
         super.initGui();
         this.clearOptions();
+        this.dataCacheClearButton = null;
+        this.dataPrimaryCacheButton = null;
+        this.dataIndependentCacheButton = null;
+        this.dataTotalCacheButton = null;
         int x = 10;
         int y = 26;
         for (Tab tab : Tab.values()) {
@@ -61,7 +73,17 @@ public class GuiConfigs extends GuiConfigsBase {
             String label = fi.dy.masa.malilib.util.StringUtils.translate("litematica_container_filler.gui.button.render_editor");
             ButtonGeneric button = new ButtonGeneric(10, 50, 180, 20, label);
             this.addButton(button, (clickedButton, mouseButton) -> GuiBase.openGui(new GuiRenderEditor(this)));
+        } else if (tab == Tab.DATA) {
+            this.initDataCacheControls();
         }
+    }
+
+    @Override
+    public void drawContents(DrawContext drawContext, int mouseX, int mouseY, float partialTicks) {
+        if (tab == Tab.DATA) {
+            this.updateDataCacheStats();
+        }
+        super.drawContents(drawContext, mouseX, mouseY, partialTicks);
     }
 
     @Override
@@ -98,7 +120,60 @@ public class GuiConfigs extends GuiConfigsBase {
     public enum Tab { FEATURE, LOGISTICS, DATA, FILTER, TOOLS, RENDER, HOTKEYS }
 
     private static int getListYForTab() {
-        return tab == Tab.RENDER ? LIST_Y_WITH_EXTRA_BUTTON : LIST_Y_COMPACT;
+        return tab == Tab.RENDER || tab == Tab.DATA ? LIST_Y_WITH_EXTRA_BUTTON : LIST_Y_COMPACT;
+    }
+
+    private void initDataCacheControls() {
+        int x = 10;
+        int y = 50;
+        int gap = 4;
+
+        this.dataCacheClearButton = new ButtonGeneric(x, y, 92, 20, "");
+        this.addButton(this.dataCacheClearButton, (clickedButton, mouseButton) -> {
+            RealContainerCache.clear();
+            this.updateDataCacheStats();
+        });
+        x += this.dataCacheClearButton.getWidth() + gap;
+
+        this.dataPrimaryCacheButton = new ButtonGeneric(x, y, 122, 20, "");
+        this.dataPrimaryCacheButton.setEnabled(false);
+        this.addButton(this.dataPrimaryCacheButton, (clickedButton, mouseButton) -> {});
+        x += this.dataPrimaryCacheButton.getWidth() + gap;
+
+        this.dataIndependentCacheButton = new ButtonGeneric(x, y, 122, 20, "");
+        this.dataIndependentCacheButton.setEnabled(false);
+        this.addButton(this.dataIndependentCacheButton, (clickedButton, mouseButton) -> {});
+        x += this.dataIndependentCacheButton.getWidth() + gap;
+
+        this.dataTotalCacheButton = new ButtonGeneric(x, y, 110, 20, "");
+        this.dataTotalCacheButton.setEnabled(false);
+        this.addButton(this.dataTotalCacheButton, (clickedButton, mouseButton) -> {});
+
+        this.updateDataCacheStats();
+    }
+
+    private void updateDataCacheStats() {
+        if (this.dataCacheClearButton == null || this.dataPrimaryCacheButton == null ||
+                this.dataIndependentCacheButton == null || this.dataTotalCacheButton == null) {
+            return;
+        }
+
+        int primaryCount = RealContainerCache.getPrimaryCacheEntryCount();
+        int independentCount = PcaSyncHandler.getIndependentCacheEntryCount();
+        int totalCount = RealContainerCache.getTotalCacheEntryCount();
+
+        this.dataCacheClearButton.setDisplayString(StringUtils.translate("litematica_container_filler.gui.button.data_cache_clear"));
+        this.dataCacheClearButton.setHoverStrings(StringUtils.translate("litematica_container_filler.gui.tooltip.data_cache_clear"));
+        this.dataCacheClearButton.setEnabled(totalCount > 0);
+
+        this.dataPrimaryCacheButton.setDisplayString(StringUtils.translate("litematica_container_filler.gui.label.data_cache_primary", primaryCount));
+        this.dataPrimaryCacheButton.setHoverStrings(StringUtils.translate("litematica_container_filler.gui.tooltip.data_cache_primary"));
+
+        this.dataIndependentCacheButton.setDisplayString(StringUtils.translate("litematica_container_filler.gui.label.data_cache_independent", independentCount));
+        this.dataIndependentCacheButton.setHoverStrings(StringUtils.translate("litematica_container_filler.gui.tooltip.data_cache_independent"));
+
+        this.dataTotalCacheButton.setDisplayString(StringUtils.translate("litematica_container_filler.gui.label.data_cache_total", totalCount));
+        this.dataTotalCacheButton.setHoverStrings(StringUtils.translate("litematica_container_filler.gui.tooltip.data_cache_total"));
     }
 
     private static class ConfigListWidget extends WidgetListConfigOptions {

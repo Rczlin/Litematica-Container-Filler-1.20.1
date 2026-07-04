@@ -33,7 +33,6 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class RealContainerCache {
     private static final long CACHE_TTL_MS = 300000L;
-    private static final int MAX_CACHE_ENTRIES = 32768;
     private static final int MAX_PENDING_NBT_REQUESTS = 2048;
     private static final Map<BlockPos, Map<Integer, ItemStack>> CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> LOCK_CACHE = new ConcurrentHashMap<>();
@@ -80,6 +79,20 @@ public class RealContainerCache {
         Set<BlockPos> changed = new HashSet<>(CHANGED_POSITIONS);
         CHANGED_POSITIONS.removeAll(changed);
         return changed;
+    }
+
+    public static int getPrimaryCacheEntryCount() {
+        return CACHE_TIME.size();
+    }
+
+    public static int getTotalCacheEntryCount() {
+        Set<BlockPos> keys = new HashSet<>(CACHE_TIME.keySet());
+        keys.addAll(PcaSyncHandler.getCachedPositionsSnapshot());
+        return keys.size();
+    }
+
+    public static void applyConfiguredCacheLimit() {
+        evictIfNeeded();
     }
 
     public static void rememberPendingScreenTarget(World world, BlockPos pos) {
@@ -705,6 +718,7 @@ public class RealContainerCache {
                 rememberLargeBarrelIfObserved(client, pos, inferredSlotCount);
                 putSlotCount(pos, inferredSlotCount);
                 CACHE_TIME.put(pos.toImmutable(), System.currentTimeMillis());
+                evictIfNeeded();
                 rememberBlockEntityIdentity(pos, null);
                 changed = true;
 
@@ -747,6 +761,7 @@ public class RealContainerCache {
 
         NBT_QUERY_CACHE.put(key, snapshot);
         CACHE_TIME.put(key, System.currentTimeMillis());
+        evictIfNeeded();
 
         if (slotCount > 0) {
             rememberLargeBarrelIfObserved(client, pos, slotCount);
@@ -1340,13 +1355,12 @@ public class RealContainerCache {
     }
 
     private static void putCachedItems(BlockPos pos, Map<Integer, ItemStack> items) {
-        evictIfNeeded();
         CACHE.put(pos, items);
         CACHE_TIME.put(pos, System.currentTimeMillis());
+        evictIfNeeded();
     }
 
     private static boolean putCachedItemsIfChanged(BlockPos pos, Map<Integer, ItemStack> items) {
-        evictIfNeeded();
         Map<Integer, ItemStack> snapshot = copyItems(items);
         Map<Integer, ItemStack> previous = CACHE.get(pos);
         boolean changed = !sameItems(previous, snapshot);
@@ -1354,6 +1368,7 @@ public class RealContainerCache {
             CACHE.put(pos, snapshot);
         }
         CACHE_TIME.put(pos, System.currentTimeMillis());
+        evictIfNeeded();
         return changed;
     }
 
@@ -1400,27 +1415,43 @@ public class RealContainerCache {
     }
 
     private static void evictIfNeeded() {
-        if (CACHE.size() < MAX_CACHE_ENTRIES) {
+        int limit = getMaxCacheEntries();
+        if (CACHE_TIME.size() <= limit) {
             return;
         }
 
-        BlockPos oldest = null;
-        long oldestTime = Long.MAX_VALUE;
-        for (Map.Entry<BlockPos, Long> entry : CACHE_TIME.entrySet()) {
-            if (entry.getValue() < oldestTime) {
-                oldestTime = entry.getValue();
-                oldest = entry.getKey();
+        while (CACHE_TIME.size() > limit) {
+            BlockPos oldest = null;
+            long oldestTime = Long.MAX_VALUE;
+            for (Map.Entry<BlockPos, Long> entry : CACHE_TIME.entrySet()) {
+                if (entry.getValue() < oldestTime) {
+                    oldestTime = entry.getValue();
+                    oldest = entry.getKey();
+                }
             }
-        }
 
-        if (oldest != null) {
-            CACHE.remove(oldest);
-            LOCK_CACHE.remove(oldest);
-            SLOT_COUNT_CACHE.remove(oldest);
-            NBT_QUERY_CACHE.remove(oldest);
-            LAST_REQUEST_TIME.remove(oldest);
-            CACHE_TIME.remove(oldest);
+            if (oldest == null) {
+                break;
+            }
+
+            removeCacheEntry(oldest);
         }
+    }
+
+    private static int getMaxCacheEntries() {
+        return Math.max(256, Configs.getConfiguredCacheEntryLimit());
+    }
+
+    private static void removeCacheEntry(BlockPos pos) {
+        if (pos == null) return;
+        CACHE.remove(pos);
+        LOCK_CACHE.remove(pos);
+        SLOT_COUNT_CACHE.remove(pos);
+        NBT_QUERY_CACHE.remove(pos);
+        SYNC_SNAPSHOT_CACHE.remove(pos);
+        SYNC_SNAPSHOT_TIME.remove(pos);
+        LAST_REQUEST_TIME.remove(pos);
+        CACHE_TIME.remove(pos);
     }
 
     public static int getKnownSlotCount(BlockPos pos) {

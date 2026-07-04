@@ -1,6 +1,7 @@
 package com.mimicenzymes.litematicafiller.network;
 
 import com.mimicenzymes.litematicafiller.Reference;
+import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mimicenzymes.litematicafiller.core.RealContainerCache;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
@@ -21,9 +22,11 @@ import org.apache.logging.log4j.Logger;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -35,7 +38,6 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class PcaSyncHandler {
     private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
-    private static final int MAX_INDEPENDENT_CACHE_SIZE = 32768;
 
     public static final Identifier ENABLE_PCA_SYNC_PROTOCOL  = new Identifier("pca", "enable_pca_sync_protocol");
     public static final Identifier DISABLE_PCA_SYNC_PROTOCOL = new Identifier("pca", "disable_pca_sync_protocol");
@@ -216,6 +218,14 @@ public class PcaSyncHandler {
         return sc != null ? sc : inferSlotCountFromItems(INDEPENDENT_CACHE.get(pos));
     }
 
+    public static int getIndependentCacheEntryCount() {
+        return INDEPENDENT_CACHE.size();
+    }
+
+    public static Set<BlockPos> getCachedPositionsSnapshot() {
+        return new HashSet<>(INDEPENDENT_CACHE.keySet());
+    }
+
     public static void clearCachedData(BlockPos pos) {
         if (pos == null) return;
         BlockPos key = pos.toImmutable();
@@ -226,6 +236,10 @@ public class PcaSyncHandler {
     public static void clearAllCachedData() {
         INDEPENDENT_CACHE.clear();
         SLOT_COUNT_CACHE.clear();
+    }
+
+    public static void applyConfiguredCacheLimit() {
+        trimToConfiguredLimit();
     }
 
     /** Attempt to request container data. PCA first, MiniHUD sender as fallback. */
@@ -249,19 +263,28 @@ public class PcaSyncHandler {
     // ---- Internal cache ----
 
     private static void putIndependentCache(BlockPos pos, Map<Integer, ItemStack> items, int slotCount) {
-        while (INDEPENDENT_CACHE.size() >= MAX_INDEPENDENT_CACHE_SIZE) {
-            var it = INDEPENDENT_CACHE.keySet().iterator();
-            if (!it.hasNext()) break;
-            BlockPos evict = it.next();
-            it.remove();
-            SLOT_COUNT_CACHE.remove(evict);
-        }
         INDEPENDENT_CACHE.put(pos, items);
         if (slotCount > 0) {
             SLOT_COUNT_CACHE.merge(pos, slotCount, Math::max);
         } else {
             rememberSlotCount(pos, items);
         }
+        trimToConfiguredLimit();
+    }
+
+    private static void trimToConfiguredLimit() {
+        int limit = getMaxIndependentCacheSize();
+        while (INDEPENDENT_CACHE.size() > limit) {
+            var it = INDEPENDENT_CACHE.keySet().iterator();
+            if (!it.hasNext()) break;
+            BlockPos evict = it.next();
+            it.remove();
+            SLOT_COUNT_CACHE.remove(evict);
+        }
+    }
+
+    private static int getMaxIndependentCacheSize() {
+        return Math.max(256, Configs.getConfiguredCacheEntryLimit());
     }
 
     private static void rememberSlotCount(BlockPos pos, Object inventoryData) {

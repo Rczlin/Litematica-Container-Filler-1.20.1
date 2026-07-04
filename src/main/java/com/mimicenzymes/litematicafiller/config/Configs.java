@@ -4,10 +4,12 @@ import com.google.common.collect.ImmutableList;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mimicenzymes.litematicafiller.Reference;
+import com.mimicenzymes.litematicafiller.core.RealContainerCache;
 import com.mimicenzymes.litematicafiller.filter.ContainerFilterMode;
 import com.mimicenzymes.litematicafiller.filter.ContainerFilterScope;
 import com.mimicenzymes.litematicafiller.gui.GuiConfigs;
 import com.mimicenzymes.litematicafiller.input.InputHandler;
+import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.tool.ContainerClearOutputMode;
 import com.mimicenzymes.litematicafiller.tool.ContainerToolMode;
 import fi.dy.masa.malilib.config.ConfigManager;
@@ -56,6 +58,7 @@ public class Configs implements IConfigHandler {
     //数据同步设置
     public static final ConfigBooleanHotkeyed ENABLE_DATA_SYNC      = new ConfigBooleanHotkeyed("litematica_container_filler.config.name.enableDataSync", true, "", "litematica_container_filler.config.comment.enableDataSync");
     public static final ConfigBoolean ENABLE_OP_NBT_QUERY           = new ConfigBoolean("litematica_container_filler.config.name.enableOpNbtQuery", true, "litematica_container_filler.config.comment.enableOpNbtQuery");
+    public static final ConfigInteger CACHE_ENTRY_LIMIT             = new ConfigInteger("litematica_container_filler.config.name.cacheEntryLimit", 32768, 256, 262144, "litematica_container_filler.config.comment.cacheEntryLimit");
 
     //自动物流设置
     public static final ConfigBoolean ENABLE_CREATIVE_FILL          = new ConfigBoolean("litematica_container_filler.config.name.creativeFill", true, "litematica_container_filler.config.comment.creativeFill");
@@ -159,6 +162,7 @@ public class Configs implements IConfigHandler {
         DATA_OPTIONS = ImmutableList.of(
                 ENABLE_DATA_SYNC,
                 ENABLE_OP_NBT_QUERY,
+                CACHE_ENTRY_LIMIT,
                 RATE_LIMIT_CLICK_PACKETS,
                 CLICK_PACKET_RATE_LIMIT
         );
@@ -359,7 +363,13 @@ public class Configs implements IConfigHandler {
 
     public static void saveToFile() {
         INSTANCE.save();
+        RealContainerCache.applyConfiguredCacheLimit();
+        PcaSyncHandler.applyConfiguredCacheLimit();
         ConfigManager.getInstance().onConfigsChanged(Reference.MOD_ID);
+    }
+
+    public static int getConfiguredCacheEntryLimit() {
+        return CACHE_ENTRY_LIMIT.getIntegerValue();
     }
 
     public static CarpetLargeBarrelMode getCarpetLargeBarrelMode() {
