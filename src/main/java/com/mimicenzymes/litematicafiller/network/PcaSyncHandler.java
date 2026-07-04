@@ -22,6 +22,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
+import com.mimicenzymes.litematicafiller.config.Configs;
+
 /**
  * PCA (PluslsCarpetAddition) sync protocol handler.
  *
@@ -31,6 +33,7 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 public class PcaSyncHandler {
     private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
     private static final int MAX_UPDATES_PER_TICK = 128;
+    private static final long REQUEST_TIMEOUT_TICKS = 20L;
 
     public static final Identifier ENABLE_PCA_SYNC_PROTOCOL  = new Identifier("pca", "enable_pca_sync_protocol");
     public static final Identifier DISABLE_PCA_SYNC_PROTOCOL = new Identifier("pca", "disable_pca_sync_protocol");
@@ -40,6 +43,10 @@ public class PcaSyncHandler {
     private static final Map<BlockPos, PcaUpdateBlockEntityData> PENDING_UPDATES = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedDeque<BlockPos> PENDING_UPDATE_ORDER = new ConcurrentLinkedDeque<>();
     private static final Set<BlockPos> QUEUED_POSITIONS = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentLinkedDeque<BlockPos> PENDING_REQUEST_ORDER = new ConcurrentLinkedDeque<>();
+    private static final Set<BlockPos> QUEUED_REQUEST_POSITIONS = ConcurrentHashMap.newKeySet();
+    private static final Map<BlockPos, Long> IN_FLIGHT_REQUESTS = new ConcurrentHashMap<>();
+    private static final Map<BlockPos, Long> RETRY_COOLDOWNS = new ConcurrentHashMap<>();
 
     private static boolean initialized = false;
     /** True when server has PCA protocol enabled. */
@@ -81,7 +88,15 @@ public class PcaSyncHandler {
     }
 
     public static void tick(MinecraftClient client) {
-        if (client == null || client.world == null || PENDING_UPDATE_ORDER.isEmpty()) {
+        if (client == null || client.world == null) {
+            return;
+        }
+
+        long worldTime = client.world.getTime();
+        expireTimedOutRequests(worldTime);
+        pumpQueuedRequests(worldTime);
+
+        if (PENDING_UPDATE_ORDER.isEmpty()) {
             return;
         }
 
@@ -113,24 +128,108 @@ public class PcaSyncHandler {
 
     public static void clearPendingUpdate(BlockPos pos) {
         if (pos == null) return;
-        PENDING_UPDATES.remove(pos.toImmutable());
+        BlockPos key = pos.toImmutable();
+        PENDING_UPDATES.remove(key);
+        clearRequestState(key);
     }
 
     public static void clearPendingUpdates() {
         PENDING_UPDATES.clear();
         PENDING_UPDATE_ORDER.clear();
         QUEUED_POSITIONS.clear();
+        PENDING_REQUEST_ORDER.clear();
+        QUEUED_REQUEST_POSITIONS.clear();
+        IN_FLIGHT_REQUESTS.clear();
+        RETRY_COOLDOWNS.clear();
     }
 
     public static boolean requestData(BlockPos pos) {
-        if (!ClientPlayNetworking.canSend(SYNC_BLOCK_ENTITY)) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null || !ClientPlayNetworking.canSend(SYNC_BLOCK_ENTITY)) {
             return false;
         }
 
-        PacketByteBuf buf = new PacketByteBuf(io.netty.buffer.Unpooled.buffer());
-        buf.writeBlockPos(pos);
-        ClientPlayNetworking.send(SYNC_BLOCK_ENTITY, buf);
+        BlockPos key = pos.toImmutable();
+        if (IN_FLIGHT_REQUESTS.containsKey(key) || QUEUED_REQUEST_POSITIONS.contains(key)) {
+            return true;
+        }
+
+        long worldTime = client.world.getTime();
+        long retryAt = RETRY_COOLDOWNS.getOrDefault(key, Long.MIN_VALUE);
+        if (worldTime < retryAt) {
+            return false;
+        }
+
+        RETRY_COOLDOWNS.remove(key);
+        if (QUEUED_REQUEST_POSITIONS.add(key)) {
+            PENDING_REQUEST_ORDER.offerLast(key);
+        }
         return true;
+    }
+
+    private static void pumpQueuedRequests(long worldTime) {
+        int sent = 0;
+        int requestBudget = Configs.PCA_SYNC_REQUESTS_PER_TICK.getIntegerValue();
+        boolean unlimited = requestBudget == 0;
+
+        while ((unlimited || sent < requestBudget) && !PENDING_REQUEST_ORDER.isEmpty()) {
+            BlockPos pos = PENDING_REQUEST_ORDER.pollFirst();
+            if (pos == null) {
+                continue;
+            }
+
+            QUEUED_REQUEST_POSITIONS.remove(pos);
+            if (IN_FLIGHT_REQUESTS.containsKey(pos)) {
+                continue;
+            }
+
+            long retryAt = RETRY_COOLDOWNS.getOrDefault(pos, Long.MIN_VALUE);
+            if (worldTime < retryAt) {
+                continue;
+            }
+
+            if (!ClientPlayNetworking.canSend(SYNC_BLOCK_ENTITY)) {
+                if (QUEUED_REQUEST_POSITIONS.add(pos)) {
+                    PENDING_REQUEST_ORDER.offerFirst(pos);
+                }
+                break;
+            }
+
+            PacketByteBuf buf = new PacketByteBuf(io.netty.buffer.Unpooled.buffer());
+            buf.writeBlockPos(pos);
+            ClientPlayNetworking.send(SYNC_BLOCK_ENTITY, buf);
+            IN_FLIGHT_REQUESTS.put(pos, worldTime);
+            RETRY_COOLDOWNS.remove(pos);
+            sent++;
+        }
+    }
+
+    private static void expireTimedOutRequests(long worldTime) {
+        for (Map.Entry<BlockPos, Long> entry : IN_FLIGHT_REQUESTS.entrySet()) {
+            Long requestedAt = entry.getValue();
+            if (requestedAt == null || worldTime - requestedAt < REQUEST_TIMEOUT_TICKS) {
+                continue;
+            }
+
+            BlockPos pos = entry.getKey();
+            if (pos == null || !IN_FLIGHT_REQUESTS.remove(pos, requestedAt)) {
+                continue;
+            }
+
+            int cooldown = Configs.PCA_SYNC_RETRY_COOLDOWN_TICKS.getIntegerValue();
+            if (cooldown > 0) {
+                RETRY_COOLDOWNS.put(pos, worldTime + cooldown);
+            } else {
+                RETRY_COOLDOWNS.remove(pos);
+            }
+        }
+    }
+
+    private static void clearRequestState(BlockPos pos) {
+        if (pos == null) return;
+        QUEUED_REQUEST_POSITIONS.remove(pos);
+        IN_FLIGHT_REQUESTS.remove(pos);
+        RETRY_COOLDOWNS.remove(pos);
     }
 
     private static class PcaUpdateBlockEntityData {
@@ -165,6 +264,7 @@ public class PcaSyncHandler {
 
     private static void enqueueUpdate(PcaUpdateBlockEntityData data) {
         BlockPos pos = data.pos;
+        clearRequestState(pos);
         PENDING_UPDATES.put(pos, data);
         if (QUEUED_POSITIONS.add(pos)) {
             PENDING_UPDATE_ORDER.offerLast(pos);
