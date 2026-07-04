@@ -33,7 +33,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public class RealContainerCache {
     private static final long CACHE_TTL_MS = 300000L;
-    private static final int MAX_CACHE_ENTRIES = 2048;
+    private static final int MAX_CACHE_ENTRIES = 32768;
     private static final int MAX_PENDING_NBT_REQUESTS = 2048;
     private static final Map<BlockPos, Map<Integer, ItemStack>> CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> LOCK_CACHE = new ConcurrentHashMap<>();
@@ -572,7 +572,6 @@ public class RealContainerCache {
 
                 Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
                 if (snapshot != null) {
-                    requestContainerData(pos);
                     return snapshot;
                 }
 
@@ -596,7 +595,6 @@ public class RealContainerCache {
 
         Map<Integer, ItemStack> snapshot = getSyncSnapshot(pos);
         if (snapshot != null) {
-            requestContainerData(pos);
             return snapshot;
         }
 
@@ -638,11 +636,7 @@ public class RealContainerCache {
 
         if (Configs.ENABLE_DATA_SYNC.getBooleanValue()) {
             requested |= requestLitematicaData(pos, halves, isDouble);
-            if (isDouble) {
-                requested |= PcaSyncHandler.requestData(halves[0]) | PcaSyncHandler.requestData(halves[1]);
-            } else {
-                requested |= PcaSyncHandler.requestData(pos);
-            }
+            requested |= PcaSyncHandler.requestData(pos);
         }
 
         if (requested) {
@@ -739,6 +733,60 @@ public class RealContainerCache {
                     markChanged(pos, halves);
                 }
             }
+        }
+    }
+
+    public static void acceptExternalContainerData(BlockPos pos, Map<Integer, ItemStack> items, int slotCount) {
+        if (pos == null || items == null) return;
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        BlockPos key = pos.toImmutable();
+        Map<Integer, ItemStack> snapshot = copyItems(items);
+        Map<Integer, ItemStack> previousRaw = NBT_QUERY_CACHE.get(key);
+        boolean changed = !sameItems(previousRaw, snapshot);
+
+        NBT_QUERY_CACHE.put(key, snapshot);
+        CACHE_TIME.put(key, System.currentTimeMillis());
+
+        if (slotCount > 0) {
+            rememberLargeBarrelIfObserved(client, pos, slotCount);
+            changed |= putSlotCountIfChanged(pos, slotCount);
+        }
+
+        if (client.world != null) {
+            BlockState state = client.world.getBlockState(pos);
+            BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, pos, state, slotCount);
+            if (halves != null) {
+                Map<Integer, ItemStack> combined = combineHalves(
+                        NBT_QUERY_CACHE.get(halves[0].toImmutable()),
+                        NBT_QUERY_CACHE.get(halves[1].toImmutable()));
+
+                if (combined != null) {
+                    changed |= putCachedItemsIfChanged(halves[0].toImmutable(), combined);
+                    changed |= putCachedItemsIfChanged(halves[1].toImmutable(), combined);
+                    changed |= putSlotCountIfChanged(halves[0], 54);
+                    changed |= putSlotCountIfChanged(halves[1], 54);
+                    rememberSyncedData(halves, combined);
+                    rememberBlockEntityIdentity(pos, halves);
+                    clearInvalidation(pos, halves);
+
+                    if (changed) {
+                        cacheVersion++;
+                        markChanged(pos, halves);
+                    }
+                }
+                return;
+            }
+        }
+
+        changed |= putCachedItemsIfChanged(key, snapshot);
+        rememberSyncedData(pos, snapshot);
+        rememberBlockEntityIdentity(pos, null);
+        clearInvalidation(pos, null);
+
+        if (changed) {
+            cacheVersion++;
+            markChanged(pos, null);
         }
     }
 

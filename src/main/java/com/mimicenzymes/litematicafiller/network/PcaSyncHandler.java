@@ -1,9 +1,12 @@
 package com.mimicenzymes.litematicafiller.network;
 
+import com.mimicenzymes.litematicafiller.Reference;
+import com.mimicenzymes.litematicafiller.core.RealContainerCache;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.inventory.Inventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtElement;
@@ -14,8 +17,6 @@ import net.minecraft.util.math.BlockPos;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-
-import com.mimicenzymes.litematicafiller.Reference;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -34,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class PcaSyncHandler {
     private static final Logger LOGGER = LogManager.getLogger(Reference.MOD_ID);
-    private static final int MAX_INDEPENDENT_CACHE_SIZE = 1024;
+    private static final int MAX_INDEPENDENT_CACHE_SIZE = 32768;
 
     public static final Identifier ENABLE_PCA_SYNC_PROTOCOL  = new Identifier("pca", "enable_pca_sync_protocol");
     public static final Identifier DISABLE_PCA_SYNC_PROTOCOL = new Identifier("pca", "disable_pca_sync_protocol");
@@ -117,8 +118,10 @@ public class PcaSyncHandler {
         }
 
         Map<Integer, ItemStack> items = extractItemsFromNbt(data.nbt);
-        if (items != null && !items.isEmpty()) {
-            putIndependentCache(pos, items);
+        int slotCount = inferSlotCountFromUpdate(client, pos, be, items);
+        if (items != null && (slotCount > 0 || !items.isEmpty())) {
+            putIndependentCache(pos, items, slotCount);
+            RealContainerCache.acceptExternalContainerData(pos, items, slotCount);
             LOGGER.info("[LCF DEBUG] [PCA] Got {} items for {}", items.size(), pos.toShortString());
         }
     }
@@ -126,8 +129,6 @@ public class PcaSyncHandler {
     private static Map<Integer, ItemStack> extractItemsFromNbt(NbtCompound nbt) {
         if (nbt == null) return null;
         NbtList itemsList = nbt.getList("Items", NbtElement.COMPOUND_TYPE);
-        if (itemsList.isEmpty()) return null;
-
         Map<Integer, ItemStack> items = new HashMap<>();
         for (int i = 0; i < itemsList.size(); i++) {
             NbtCompound tag = itemsList.getCompound(i);
@@ -135,7 +136,42 @@ public class PcaSyncHandler {
             ItemStack stack = ItemStack.fromNbt(tag);
             if (!stack.isEmpty()) items.put(slot, stack);
         }
-        return items.isEmpty() ? null : items;
+        return items;
+    }
+
+    private static int inferSlotCountFromUpdate(MinecraftClient client, BlockPos pos, BlockEntity be, Map<Integer, ItemStack> items) {
+        int slotCount = inferSlotCountFromItems(items);
+        if (slotCount > 0) return slotCount;
+
+        if (be instanceof Inventory inventory) {
+            return normalizeSlotCount(inventory.size());
+        }
+
+        slotCount = inferSlotCountFromObjectGeneric(be);
+        if (slotCount > 0) return slotCount;
+
+        if (client.world == null) return -1;
+        var state = client.world.getBlockState(pos);
+        if (state.getBlock() instanceof net.minecraft.block.ChestBlock ||
+                state.getBlock() instanceof net.minecraft.block.BarrelBlock ||
+                state.getBlock() instanceof net.minecraft.block.ShulkerBoxBlock ||
+                state.isOf(net.minecraft.block.Blocks.ENDER_CHEST)) {
+            return 27;
+        }
+        if (state.isOf(net.minecraft.block.Blocks.HOPPER) ||
+                state.isOf(net.minecraft.block.Blocks.BREWING_STAND)) {
+            return 5;
+        }
+        if (state.isOf(net.minecraft.block.Blocks.FURNACE) ||
+                state.isOf(net.minecraft.block.Blocks.BLAST_FURNACE) ||
+                state.isOf(net.minecraft.block.Blocks.SMOKER)) {
+            return 3;
+        }
+        if (state.isOf(net.minecraft.block.Blocks.DISPENSER) ||
+                state.isOf(net.minecraft.block.Blocks.DROPPER)) {
+            return 9;
+        }
+        return -1;
     }
 
     // ---- Public API ----
@@ -212,7 +248,7 @@ public class PcaSyncHandler {
 
     // ---- Internal cache ----
 
-    private static void putIndependentCache(BlockPos pos, Map<Integer, ItemStack> items) {
+    private static void putIndependentCache(BlockPos pos, Map<Integer, ItemStack> items, int slotCount) {
         while (INDEPENDENT_CACHE.size() >= MAX_INDEPENDENT_CACHE_SIZE) {
             var it = INDEPENDENT_CACHE.keySet().iterator();
             if (!it.hasNext()) break;
@@ -221,7 +257,11 @@ public class PcaSyncHandler {
             SLOT_COUNT_CACHE.remove(evict);
         }
         INDEPENDENT_CACHE.put(pos, items);
-        rememberSlotCount(pos, items);
+        if (slotCount > 0) {
+            SLOT_COUNT_CACHE.merge(pos, slotCount, Math::max);
+        } else {
+            rememberSlotCount(pos, items);
+        }
     }
 
     private static void rememberSlotCount(BlockPos pos, Object inventoryData) {

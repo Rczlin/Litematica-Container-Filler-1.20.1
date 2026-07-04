@@ -525,7 +525,6 @@ public class HighlightScanner {
             } else {
                 Set<Integer> ignoredSlots = getCachedIgnoredSlots(checkPos, client);
                 type = evaluateState(cached, required, ignoredSlots, isCrafter, crafterNeedsLocking);
-                queueHighlightRefresh(checkPos, requestIntervalFor(type, state), now);
             }
 
             if (!hasJob && type == HighlightState.SATISFIED) return null;
