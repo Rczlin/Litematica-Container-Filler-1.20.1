@@ -32,7 +32,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class RealContainerCache {
-    private static final long CACHE_TTL_MS = 300000L;
     private static final int MAX_PENDING_NBT_REQUESTS = 2048;
     private static final Map<BlockPos, Map<Integer, ItemStack>> CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> LOCK_CACHE = new ConcurrentHashMap<>();
@@ -1415,7 +1414,8 @@ public class RealContainerCache {
 
     private static void cleanupExpiredCache() {
         long now = System.currentTimeMillis();
-        CACHE_TIME.entrySet().removeIf(entry -> now - entry.getValue() > CACHE_TTL_MS);
+        long ttl = Configs.getCacheTtlMs();
+        CACHE_TIME.entrySet().removeIf(entry -> now - entry.getValue() > ttl);
         CACHE.keySet().removeIf(pos -> !CACHE_TIME.containsKey(pos));
         LOCK_CACHE.keySet().removeIf(pos -> !CACHE_TIME.containsKey(pos));
         NBT_QUERY_CACHE.keySet().removeIf(pos -> !CACHE_TIME.containsKey(pos));

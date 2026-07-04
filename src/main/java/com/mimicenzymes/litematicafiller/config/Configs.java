@@ -58,6 +58,7 @@ public class Configs implements IConfigHandler {
     public static final ConfigBooleanHotkeyed ENABLE_DATA_SYNC      = new ConfigBooleanHotkeyed("litematica_container_filler.config.name.enableDataSync", true, "", "litematica_container_filler.config.comment.enableDataSync");
     public static final ConfigBoolean ENABLE_OP_NBT_QUERY           = new ConfigBoolean("litematica_container_filler.config.name.enableOpNbtQuery", true, "litematica_container_filler.config.comment.enableOpNbtQuery");
     public static final ConfigInteger CACHE_ENTRY_LIMIT             = new ConfigInteger("litematica_container_filler.config.name.cacheEntryLimit", 32768, 256, 262144, "litematica_container_filler.config.comment.cacheEntryLimit");
+    public static final ConfigInteger CACHE_TTL                     = new ConfigInteger("litematica_container_filler.config.name.cacheTtl", 300, 10, 36000, "litematica_container_filler.config.comment.cacheTtl");
     public static final ConfigInteger PCA_SYNC_REQUESTS_PER_TICK    = new ConfigInteger("litematica_container_filler.config.name.pcaSyncRequestsPerTick", 16, 0, 2048, "litematica_container_filler.config.comment.pcaSyncRequestsPerTick");
     public static final ConfigInteger PCA_SYNC_RETRY_COOLDOWN_TICKS = new ConfigInteger("litematica_container_filler.config.name.pcaSyncRetryCooldownTicks", 20, 0, 1200, "litematica_container_filler.config.comment.pcaSyncRetryCooldownTicks");
     public static final ConfigInteger HIGHLIGHT_DATA_REQUEST_BUDGET = new ConfigInteger("litematica_container_filler.config.name.highlightDataRequestBudget", 128, 1, 2048, "litematica_container_filler.config.comment.highlightDataRequestBudget");
@@ -166,6 +167,7 @@ public class Configs implements IConfigHandler {
                 ENABLE_DATA_SYNC,
                 ENABLE_OP_NBT_QUERY,
                 CACHE_ENTRY_LIMIT,
+                CACHE_TTL,
                 PCA_SYNC_REQUESTS_PER_TICK,
                 PCA_SYNC_RETRY_COOLDOWN_TICKS,
                 HIGHLIGHT_DATA_REQUEST_BUDGET,
@@ -376,6 +378,10 @@ public class Configs implements IConfigHandler {
 
     public static int getConfiguredCacheEntryLimit() {
         return CACHE_ENTRY_LIMIT.getIntegerValue();
+    }
+
+    public static long getCacheTtlMs() {
+        return CACHE_TTL.getIntegerValue() * 1000L;
     }
 
     public static CarpetLargeBarrelMode getCarpetLargeBarrelMode() {

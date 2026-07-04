@@ -1,5 +1,6 @@
 package com.mimicenzymes.litematicafiller.core;
 
+import com.mimicenzymes.litematicafiller.config.Configs;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.math.BlockPos;
 
@@ -8,7 +9,6 @@ import java.util.Map;
 
 public class LitematicaCache
 {
-    private static final long CACHE_TTL_MS = 300000L;
     private static final Map<BlockPos, Map<Integer, ItemStack>> CACHE = new HashMap<>();
     private static final Map<BlockPos, Long> CACHE_TIME = new HashMap<>();
 
@@ -33,7 +33,7 @@ public class LitematicaCache
             return CACHE.get(pos);
         }
 
-        if (System.currentTimeMillis() - seenAt > CACHE_TTL_MS)
+        if (System.currentTimeMillis() - seenAt > Configs.getCacheTtlMs())
         {
             CACHE.remove(pos);
             CACHE_TIME.remove(pos);
@@ -46,7 +46,8 @@ public class LitematicaCache
     public static void cleanupExpired()
     {
         long now = System.currentTimeMillis();
-        CACHE_TIME.entrySet().removeIf(entry -> now - entry.getValue() > CACHE_TTL_MS);
+        long ttl = Configs.getCacheTtlMs();
+        CACHE_TIME.entrySet().removeIf(entry -> now - entry.getValue() > ttl);
         CACHE.keySet().removeIf(pos -> !CACHE_TIME.containsKey(pos));
     }
 }

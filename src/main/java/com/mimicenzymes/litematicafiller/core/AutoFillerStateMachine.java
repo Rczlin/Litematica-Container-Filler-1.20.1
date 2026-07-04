@@ -2646,20 +2646,37 @@ public class AutoFillerStateMachine {
         if (uiPlayerSlot < 0 || uiPlayerSlot >= handler.slots.size() || uiContainerSlot < 0 || uiContainerSlot >= handler.slots.size()) return 0;
 
         ItemStack sourceStack = client.player.getInventory().getStack(playerSlot);
+        if (sourceStack.isEmpty()) return 0;
+
+        ItemStack targetStack = handler.slots.get(uiContainerSlot).getStack();
         int countInSlot = sourceStack.getCount();
         int amountToMove = Math.min(needed, countInSlot);
+        int targetCount = targetStack.isEmpty() ? 0 : targetStack.getCount();
+        int maxCount = targetStack.isEmpty()
+                ? Math.min(sourceStack.getMaxCount(), handler.slots.get(uiContainerSlot).getMaxItemCount())
+                : Math.min(targetStack.getMaxCount(), handler.slots.get(uiContainerSlot).getMaxItemCount());
+
+        if (amountToMove <= 0 || targetCount + amountToMove > maxCount) return 0;
+
         touchOrderlyStoredItem(sourceStack);
 
         if (amountToMove == countInSlot) {
             client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
             client.interactionManager.clickSlot(syncId, uiContainerSlot, 0, SlotActionType.PICKUP, client.player);
-            client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
-        } else {
-            client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
-            for (int i = 0; i < amountToMove; i++) {
-                client.interactionManager.clickSlot(syncId, uiContainerSlot, 1, SlotActionType.PICKUP, client.player);
+            if (!handler.getCursorStack().isEmpty()) {
+                client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
             }
-            client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+        } else {
+            List<ExactMoveClick> plan = findExactMovePlan(countInSlot, targetCount, amountToMove, maxCount);
+            if (plan != null && !plan.isEmpty()) {
+                executeExactMovePlan(client, handler, uiPlayerSlot, uiContainerSlot, plan);
+            } else {
+                client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+                for (int i = 0; i < amountToMove; i++) {
+                    client.interactionManager.clickSlot(syncId, uiContainerSlot, 1, SlotActionType.PICKUP, client.player);
+                }
+                client.interactionManager.clickSlot(syncId, uiPlayerSlot, 0, SlotActionType.PICKUP, client.player);
+            }
         }
         return amountToMove;
     }
