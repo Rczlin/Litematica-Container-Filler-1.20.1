@@ -37,6 +37,7 @@ public class HighlightScanner {
     private static final long ACTIVE_REQUEST_INTERVAL_MS = 750L;
     private static final long SATISFIED_REQUEST_INTERVAL_MS = 4000L;
     private static final long EMPTY_SYNC_CONFIRMATION_MS = 5000L;
+    private static final int MAX_SCHEDULED_HIGHLIGHT_UPDATES_PER_TICK = 96;
     private static final Map<BlockPos, HighlightState> HIGHLIGHT_MAP = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Map<Integer, ItemStack>> SCHEMATIC_REQ_CACHE = new ConcurrentHashMap<>();
     private static final Map<BlockPos, Set<Integer>> SCHEMATIC_IGNORED_SLOT_CACHE = new ConcurrentHashMap<>();
@@ -75,6 +76,7 @@ public class HighlightScanner {
     private static int boostedTicks = 0;
     private static int seenGlobalReplacementVersion = -1;
     private static int seenSchematicReplacementVersion = -1;
+    private static HighlightScanPass activeScanPass = null;
 
     public static Map<BlockPos, HighlightState> getHighlights() {
         return HIGHLIGHT_MAP;
@@ -95,6 +97,7 @@ public class HighlightScanner {
 
     public static void onManualOverrideChanged(BlockPos pos, ManualContainerOverrideState state) {
         if (pos == null) return;
+        invalidateActiveScanPass();
 
         if (state == ManualContainerOverrideState.AUTO) {
             BlockPos key = pos.toImmutable();
@@ -114,6 +117,7 @@ public class HighlightScanner {
     }
 
     public static void onManualOverridesCleared() {
+        invalidateActiveScanPass();
         boolean changed = false;
         for (Map.Entry<BlockPos, HighlightState> entry : HIGHLIGHT_MAP.entrySet()) {
             HighlightState state = entry.getValue();
@@ -130,6 +134,7 @@ public class HighlightScanner {
     }
 
     public static void onMaterialReplacementChanged() {
+        invalidateActiveScanPass();
         seenGlobalReplacementVersion = MaterialReplacer.getGlobalReplacementVersion();
         seenSchematicReplacementVersion = MaterialReplacer.getSchematicReplacementVersion();
         SCHEMATIC_REQ_CACHE.clear();
@@ -253,6 +258,7 @@ public class HighlightScanner {
     }
 
     public static void onPlacementChanged() {
+        invalidateActiveScanPass();
         lastIndexTime = 0;
         SCHEMATIC_CONTAINERS = Collections.emptySet();
         SCHEMATIC_REQ_CACHE.clear();
@@ -353,10 +359,11 @@ public class HighlightScanner {
         int updateInterval = boostedTicks > 0
                 ? BOOSTED_UPDATE_INTERVAL_TICKS
                 : (modOperating || fillWorkEnabled ? NORMAL_UPDATE_INTERVAL_TICKS : IDLE_UPDATE_INTERVAL_TICKS);
+        boolean scanPassActive = activeScanPass != null;
         boolean layerRefreshDue = pendingRenderLayerRefresh &&
                 (lastRenderLayerRefreshTick == Long.MIN_VALUE ||
                         tickCounter - lastRenderLayerRefreshTick >= BOOSTED_UPDATE_INTERVAL_TICKS);
-        if (!layerRefreshDue && tickCounter % updateInterval != 0) {
+        if (!layerRefreshDue && !scanPassActive && tickCounter % updateInterval != 0) {
             if (boostedTicks > 0) boostedTicks--;
             return;
         }
@@ -366,22 +373,9 @@ public class HighlightScanner {
         }
 
         int currentRadius = Configs.RENDER_RADIUS.getIntegerValue();
-        double radiusSq = currentRadius * currentRadius;
         boolean hasManualOverrides = ManualContainerOverrideManager.hasOverrides();
-
-        HighlightBuild nextHighlights = new HighlightBuild();
-
-        for (BlockPos pos : getNearbyHighlightCandidates(currentCenter, currentRadius)) {
-            if (currentRadius > 0 && pos.getSquaredDistance(currentCenter) > radiusSq) continue;
-
-            HighlightState type = evaluateHighlightForPosition(client, schematicWorld, pos, renderLayerRange,
-                    hasManualOverrides, now);
-            if (type != null) {
-                nextHighlights.put(pos, type);
-            }
-        }
-
-        replaceHighlightsIfChanged(nextHighlights);
+        processScheduledHighlightScan(client, schematicWorld, renderLayerRange, currentCenter, currentRadius,
+                hasManualOverrides, lastRenderLayerSignature, now);
         if (boostedTicks > 0) {
             boostedTicks--;
         }
@@ -425,16 +419,7 @@ public class HighlightScanner {
             HighlightState previous = HIGHLIGHT_MAP.get(renderPos);
             HighlightState next = evaluateHighlightForPosition(client, schematicWorld, renderPos, renderLayerRange,
                     hasManualOverrides, now);
-
-            boolean changedHighlight;
-            if (next == null) {
-                changedHighlight = HIGHLIGHT_MAP.remove(renderPos) != null;
-            } else {
-                changedHighlight = previous != next;
-                if (changedHighlight) {
-                    HIGHLIGHT_MAP.put(renderPos.toImmutable(), next);
-                }
-            }
+            boolean changedHighlight = applyHighlightState(renderPos, previous, next);
 
             if (changedHighlight) {
                 anyHighlightChanged = true;
@@ -444,9 +429,82 @@ public class HighlightScanner {
         }
 
         if (anyHighlightChanged) {
-            highlightFingerprint = computeHighlightFingerprint(HIGHLIGHT_MAP);
-            highlightVersion++;
+            publishHighlightMapChange();
         }
+    }
+
+    private static void processScheduledHighlightScan(MinecraftClient client,
+                                                      net.minecraft.world.World schematicWorld,
+                                                      LayerRange renderLayerRange,
+                                                      BlockPos currentCenter,
+                                                      int currentRadius,
+                                                      boolean hasManualOverrides,
+                                                      long renderLayerSignature,
+                                                      long now) {
+        HighlightScanPass scanPass = getOrCreateActiveScanPass(currentCenter, currentRadius,
+                hasManualOverrides, renderLayerSignature);
+        boolean anyHighlightChanged = false;
+        int processed = 0;
+
+        while (processed < MAX_SCHEDULED_HIGHLIGHT_UPDATES_PER_TICK) {
+            BlockPos renderPos = scanPass.nextRenderPosition(schematicWorld);
+            if (renderPos == null) {
+                anyHighlightChanged |= removeHighlightsMissingFromScan(scanPass.seenRenderPositions);
+                activeScanPass = null;
+                break;
+            }
+
+            HighlightState previous = HIGHLIGHT_MAP.get(renderPos);
+            HighlightState next = evaluateHighlightForPosition(client, schematicWorld, renderPos, renderLayerRange,
+                    hasManualOverrides, now);
+            anyHighlightChanged |= applyHighlightState(renderPos, previous, next);
+            processed++;
+        }
+
+        if (anyHighlightChanged) {
+            publishHighlightMapChange();
+        }
+    }
+
+    private static HighlightScanPass getOrCreateActiveScanPass(BlockPos center,
+                                                               int radius,
+                                                               boolean hasManualOverrides,
+                                                               long renderLayerSignature) {
+        Map<Long, Set<BlockPos>> bucketSource = SCHEMATIC_CONTAINER_BUCKETS;
+        HighlightScanPass scanPass = activeScanPass;
+        if (scanPass == null || !scanPass.matches(center, radius, hasManualOverrides, renderLayerSignature, bucketSource)) {
+            scanPass = new HighlightScanPass(center, radius, hasManualOverrides, renderLayerSignature, bucketSource);
+            activeScanPass = scanPass;
+        }
+        return scanPass;
+    }
+
+    private static boolean applyHighlightState(BlockPos pos, HighlightState previous, HighlightState next) {
+        if (next == null) {
+            return HIGHLIGHT_MAP.remove(pos) != null;
+        }
+
+        if (previous == next) {
+            return false;
+        }
+
+        HIGHLIGHT_MAP.put(pos.toImmutable(), next);
+        return true;
+    }
+
+    private static boolean removeHighlightsMissingFromScan(Set<BlockPos> seenRenderPositions) {
+        boolean changed = false;
+        for (BlockPos pos : new ArrayList<>(HIGHLIGHT_MAP.keySet())) {
+            if (seenRenderPositions.contains(pos)) continue;
+            changed |= HIGHLIGHT_MAP.remove(pos) != null;
+        }
+        return changed;
+    }
+
+    private static void publishHighlightMapChange() {
+        highlightFingerprint = computeHighlightFingerprint(HIGHLIGHT_MAP);
+        highlightMapInitialized = true;
+        highlightVersion++;
     }
 
     private static BlockPos getRenderPositionForChangedContainer(net.minecraft.world.World schematicWorld, BlockPos pos) {
@@ -663,6 +721,7 @@ public class HighlightScanner {
     }
 
     private static void clearHighlights() {
+        invalidateActiveScanPass();
         if (HIGHLIGHT_MAP.isEmpty()) return;
 
         HIGHLIGHT_MAP.clear();
@@ -829,6 +888,10 @@ public class HighlightScanner {
         cachedNearbyMaxZ = Integer.MIN_VALUE;
     }
 
+    private static void invalidateActiveScanPass() {
+        activeScanPass = null;
+    }
+
     private static Iterable<BlockPos> getNearbyHighlightCandidates(BlockPos center, int radius) {
         Iterable<BlockPos> schematicCandidates = getNearbySchematicContainers(center, radius);
         double radiusSq = radius * radius;
@@ -968,6 +1031,83 @@ public class HighlightScanner {
 
         private HighlightFingerprint fingerprint() {
             return new HighlightFingerprint(count, sum, xor);
+        }
+    }
+
+    private static final class HighlightScanPass {
+        private final BlockPos center;
+        private final int radius;
+        private final double radiusSq;
+        private final boolean hasManualOverrides;
+        private final long renderLayerSignature;
+        private final Map<Long, Set<BlockPos>> bucketSource;
+        private final int minX;
+        private final int maxX;
+        private final int minY;
+        private final int maxY;
+        private final int minZ;
+        private final int maxZ;
+        private final Iterator<BlockPos> iterator;
+        private final Set<BlockPos> seenRenderPositions = new HashSet<>();
+
+        private HighlightScanPass(BlockPos center,
+                                  int radius,
+                                  boolean hasManualOverrides,
+                                  long renderLayerSignature,
+                                  Map<Long, Set<BlockPos>> bucketSource) {
+            this.center = center.toImmutable();
+            this.radius = radius;
+            this.radiusSq = radius > 0 ? (double) radius * radius : 0.0D;
+            this.hasManualOverrides = hasManualOverrides;
+            this.renderLayerSignature = renderLayerSignature;
+            this.bucketSource = bucketSource;
+            this.minX = radius > 0 ? (center.getX() - radius) >> 4 : Integer.MIN_VALUE;
+            this.maxX = radius > 0 ? (center.getX() + radius) >> 4 : Integer.MAX_VALUE;
+            this.minY = radius > 0 ? (center.getY() - radius) >> 4 : Integer.MIN_VALUE;
+            this.maxY = radius > 0 ? (center.getY() + radius) >> 4 : Integer.MAX_VALUE;
+            this.minZ = radius > 0 ? (center.getZ() - radius) >> 4 : Integer.MIN_VALUE;
+            this.maxZ = radius > 0 ? (center.getZ() + radius) >> 4 : Integer.MAX_VALUE;
+            this.iterator = getNearbyHighlightCandidates(this.center, radius).iterator();
+        }
+
+        private boolean matches(BlockPos currentCenter,
+                                int currentRadius,
+                                boolean currentHasManualOverrides,
+                                long currentRenderLayerSignature,
+                                Map<Long, Set<BlockPos>> currentBucketSource) {
+            if (this.radius != currentRadius
+                    || this.hasManualOverrides != currentHasManualOverrides
+                    || this.renderLayerSignature != currentRenderLayerSignature
+                    || this.bucketSource != currentBucketSource) {
+                return false;
+            }
+
+            if (currentRadius <= 0) {
+                return true;
+            }
+
+            return this.minX == ((currentCenter.getX() - currentRadius) >> 4)
+                    && this.maxX == ((currentCenter.getX() + currentRadius) >> 4)
+                    && this.minY == ((currentCenter.getY() - currentRadius) >> 4)
+                    && this.maxY == ((currentCenter.getY() + currentRadius) >> 4)
+                    && this.minZ == ((currentCenter.getZ() - currentRadius) >> 4)
+                    && this.maxZ == ((currentCenter.getZ() + currentRadius) >> 4);
+        }
+
+        private BlockPos nextRenderPosition(net.minecraft.world.World schematicWorld) {
+            while (iterator.hasNext()) {
+                BlockPos pos = iterator.next();
+                if (pos == null) continue;
+                if (radius > 0 && pos.getSquaredDistance(center) > radiusSq) continue;
+
+                BlockPos renderPos = getRenderPositionForChangedContainer(schematicWorld, pos);
+                if (renderPos == null) renderPos = pos;
+                renderPos = renderPos.toImmutable();
+                if (!seenRenderPositions.add(renderPos)) continue;
+                return renderPos;
+            }
+
+            return null;
         }
     }
 
