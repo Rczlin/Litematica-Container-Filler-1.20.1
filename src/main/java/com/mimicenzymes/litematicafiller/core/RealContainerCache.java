@@ -654,6 +654,30 @@ public class RealContainerCache {
         }
     }
 
+    public static void clearLastRequestTime(BlockPos pos) {
+        if (pos == null) return;
+
+        BlockPos key = pos.toImmutable();
+        LAST_REQUEST_TIME.remove(key);
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.world == null) return;
+
+        BlockState state = client.world.getBlockState(key);
+        BlockPos[] halves = LitematicaContainerReader.getDoubleContainerHalves(client.world, key, state);
+        if (halves == null) {
+            halves = LitematicaContainerReader.getLargeBarrelConfirmationPair(client.world, key, state);
+        }
+
+        if (halves != null) {
+            for (BlockPos half : halves) {
+                if (half != null) {
+                    LAST_REQUEST_TIME.remove(half.toImmutable());
+                }
+            }
+        }
+    }
+
     private static boolean requestOpNbtData(BlockPos pos, BlockPos[] halves, boolean isDouble, long now) {
         if (!Configs.ENABLE_OP_NBT_QUERY.getBooleanValue()) return false;
 

@@ -216,6 +216,8 @@ public class PcaSyncHandler {
                 continue;
             }
 
+            RealContainerCache.clearLastRequestTime(pos);
+
             int cooldown = Configs.PCA_SYNC_RETRY_COOLDOWN_TICKS.getIntegerValue();
             if (cooldown > 0) {
                 RETRY_COOLDOWNS.put(pos, worldTime + cooldown);
