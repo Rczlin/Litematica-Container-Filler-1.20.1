@@ -17,3 +17,6 @@ net/
 
 # 系统杂物
 .DS_Store
+
+# Agent 配置文件
+AGENTS.md
