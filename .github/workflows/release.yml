@@ -87,6 +87,8 @@ jobs:
           resolve_java_version() {
             if [[ "$1" == 1.21* ]]; then
               echo "21"
+            elif [[ "$1" == 1.20* ]]; then
+              echo "17"
             else
               echo "25"
             fi
