@@ -7,10 +7,6 @@ on:
         description: 'Create a GitHub release'
         type: boolean
         default: false
-      releaseTag:
-        description: 'Release tag, e.g. v0.10.2-1.20.1'
-        type: string
-        required: false
       modrinth_version_type:
         description: 'Modrinth version type'
         type: choice
@@ -24,15 +20,31 @@ permissions:
   contents: read
 
 jobs:
+  detect_version:
+    runs-on: ubuntu-latest
+    outputs:
+      mod_version: ${{ steps.read_version.outputs.mod_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: '1.20.1'
+
+      - name: Read mod_version from gradle.properties
+        id: read_version
+        run: |
+          version=$(sed -n 's/^mod_version=//p' gradle.properties | head -n 1)
+          echo "mod_version=$version" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $version"
+
   build:
+    needs: detect_version
     uses: ./.github/workflows/build.yml
 
   release:
-    needs: build
+    needs: [detect_version, build]
     runs-on: ubuntu-latest
-    if: |
-      github.event.inputs.isRelease == 'true' &&
-      github.event.inputs.releaseTag != ''
+    if: github.event.inputs.isRelease == 'true'
     permissions:
       contents: write
     steps:
@@ -50,18 +62,16 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
-          github-tag: ${{ github.event.inputs.releaseTag }}
-          github-name: ${{ github.event.inputs.releaseTag }}
+          github-tag: v${{ needs.detect_version.outputs.mod_version }}
+          github-name: v${{ needs.detect_version.outputs.mod_version }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           github-generate-changelog: true
           files: all-jars/!(*-sources).jar
 
   publish_modrinth:
-    needs: build
+    needs: [detect_version, build]
     runs-on: ubuntu-latest
-    if: |
-      github.event.inputs.isRelease == 'true' &&
-      github.event.inputs.releaseTag != ''
+    if: github.event.inputs.isRelease == 'true'
     steps:
       - name: Download build artifact
         uses: actions/download-artifact@v7
@@ -76,8 +86,8 @@ jobs:
         with:
           modrinth-id: miuEbr4p
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-          name: ${{ github.event.inputs.releaseTag }}
-          version: ${{ github.event.inputs.releaseTag }}
+          name: v${{ needs.detect_version.outputs.mod_version }}
+          version: v${{ needs.detect_version.outputs.mod_version }}
           version-type: ${{ github.event.inputs.modrinth_version_type }}
           loaders: fabric
           game-versions: |
@@ -91,4 +101,4 @@ jobs:
           files: branch-jars/!(*-@(dev|sources|javadoc)).jar
           changelog: |
             Published from branch `1.20.1`.
-            Full release notes: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.releaseTag }}
+            Full release notes: https://github.com/${{ github.repository }}/releases/tag/v${{ needs.detect_version.outputs.mod_version }}
