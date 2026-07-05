@@ -1,4 +1,4 @@
-name: Release (Matrix)
+name: Release
 
 on:
   workflow_dispatch:
@@ -8,206 +8,38 @@ on:
         type: boolean
         default: false
       releaseTag:
-        description: 'Release tag, required when creating a release'
+        description: 'Release tag, e.g. v0.10.2-1.20.1'
         type: string
         required: false
-      build_branches:
-        description: 'Branches to build, comma-separated, e.g. "1.21.4,26.1". Leave empty to auto-match 1.21, 1.21.*, and 26.*'
-        type: string
-        required: false
-        default: ''
-      ignore_branches:
-        description: 'Branches to skip, comma-separated, e.g. "1.21.3". Applied after the build list or auto-match result'
-        type: string
-        required: false
-        default: ''
+      modrinth_version_type:
+        description: 'Modrinth version type'
+        type: choice
+        options:
+          - release
+          - beta
+          - alpha
+        default: 'beta'
 
 permissions:
   contents: read
 
 jobs:
-  matrix_prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Generate branch publishing matrix
-        id: set-matrix
-        shell: bash
-        run: |
-          all_branches=$(git branch -r | grep -v HEAD | grep -v gh-pages | sed 's/origin\///' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sort -u)
-
-          build_list="${{ github.event.inputs.build_branches }}"
-          ignore_list="${{ github.event.inputs.ignore_branches }}"
-
-          to_array() {
-            echo "$1" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$'
-          }
-
-          if [ -n "$build_list" ]; then
-            echo "Using user-specified build branches: $build_list"
-            candidate_branches=$(to_array "$build_list" | while read -r b; do
-              if echo "$all_branches" | grep -Fxq "$b"; then
-                echo "$b"
-              else
-                echo "Warning: Branch '$b' not found in remote, ignored." >&2
-              fi
-            done | sort -u)
-          else
-            echo "Using default pattern: branches matching 1.21, 1.21.*, or 26.*"
-            candidate_branches=$(echo "$all_branches" | grep -E '1\.21($|\.)|26\.' || true)
-          fi
-
-          if [ -n "$ignore_list" ]; then
-            echo "Ignoring branches: $ignore_list"
-            ignore_array=$(to_array "$ignore_list")
-            final_branches=""
-            for b in $candidate_branches; do
-              ignore=false
-              for ig in $ignore_array; do
-                if [ "$b" = "$ig" ]; then
-                  ignore=true
-                  break
-                fi
-              done
-              if [ "$ignore" = false ]; then
-                final_branches="${final_branches}${b}\n"
-              fi
-            done
-            final_branches=$(echo -e "$final_branches" | sed '/^$/d')
-          else
-            final_branches="$candidate_branches"
-          fi
-
-          resolve_java_version() {
-            if [[ "$1" == 1.21* ]]; then
-              echo "21"
-            elif [[ "$1" == 1.20* ]]; then
-              echo "17"
-            else
-              echo "25"
-            fi
-          }
-
-          resolve_mod_version() {
-            git show "origin/$1:gradle.properties" | sed -n 's/^mod_version=//p' | head -n 1
-          }
-
-          resolve_game_versions() {
-            case "$1" in
-              1.21|1.21.1)
-                printf '1.21.1'
-                ;;
-              1.21.4)
-                printf '1.21.3\n1.21.4'
-                ;;
-              1.21.6)
-                printf '1.21.5\n1.21.6'
-                ;;
-              1.21.8)
-                printf '1.21.7\n1.21.8'
-                ;;
-              1.21.10)
-                printf '1.21.10'
-                ;;
-              1.21.11)
-                printf '1.21.11'
-                ;;
-              26.1)
-                printf '26.1\n26.1.1\n26.1.2'
-                ;;
-              *)
-                printf '%s' "$1"
-                ;;
-            esac
-          }
-
-          matrix_json='{"include":[]}'
-          for branch in $final_branches; do
-            java_version=$(resolve_java_version "$branch")
-            mod_version=$(resolve_mod_version "$branch")
-            game_versions=$(resolve_game_versions "$branch")
-
-            if [ -z "$mod_version" ]; then
-              echo "Warning: mod_version not found for branch '$branch', using branch name instead." >&2
-              mod_version="$branch"
-            fi
-
-            matrix_json=$(jq -c \
-              --arg branch "$branch" \
-              --arg java_version "$java_version" \
-              --arg mod_version "$mod_version" \
-              --arg game_versions "$game_versions" \
-              '.include += [{
-                branch: $branch,
-                java_version: $java_version,
-                mod_version: $mod_version,
-                game_versions: $game_versions
-              }]' <<< "$matrix_json")
-          done
-
-          echo "matrix=$(echo "$matrix_json" | jq -c .)" >> $GITHUB_OUTPUT
-          echo "Generated matrix: $(echo "$matrix_json" | jq -c .)"
-
-          if [ "$(echo "$matrix_json" | jq '.include | length')" -eq 0 ]; then
-            echo "Warning: No branches selected for build." >&2
-          fi
-
   build:
-    needs: matrix_prepare
-    runs-on: ubuntu-latest
-    strategy:
-      matrix: ${{ fromJson(needs.matrix_prepare.outputs.matrix) }}
-      fail-fast: false
-    steps:
-      - name: Checkout ${{ matrix.branch }}
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ matrix.branch }}
-          fetch-depth: 1
-
-      - name: Set up JDK ${{ matrix.java_version }}
-        uses: actions/setup-java@v5
-        with:
-          distribution: 'temurin'
-          java-version: ${{ matrix.java_version }}
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Build with Gradle
-        run: ./gradlew build --stacktrace
-
-      - name: Remove sources jar from release artifacts
-        run: find build/libs -type f -name '*-sources.jar' -delete
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.branch }}-build
-          path: build/libs/*.jar
-          if-no-files-found: warn
+    uses: ./.github/workflows/build.yml
 
   release:
-    needs: [matrix_prepare, build]
+    needs: build
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.isRelease == 'true' &&
-      github.event.inputs.releaseTag != '' &&
-      needs.matrix_prepare.outputs.matrix != '{"include":[]}'
+      github.event.inputs.releaseTag != ''
     permissions:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v7
         with:
-          pattern: '*-build'
-          merge-multiple: true
+          pattern: litematica_container_filler_build.*
           path: all-jars
 
       - name: List downloaded files
@@ -225,41 +57,38 @@ jobs:
           files: all-jars/!(*-sources).jar
 
   publish_modrinth:
-    needs: [matrix_prepare, build]
+    needs: build
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.isRelease == 'true' &&
-      github.event.inputs.releaseTag != '' &&
-      needs.matrix_prepare.outputs.matrix != '{"include":[]}'
-    strategy:
-      matrix: ${{ fromJson(needs.matrix_prepare.outputs.matrix) }}
-      fail-fast: false
+      github.event.inputs.releaseTag != ''
     steps:
-      - name: Download ${{ matrix.branch }} artifact
-        uses: actions/download-artifact@v8
+      - name: Download build artifact
+        uses: actions/download-artifact@v7
         with:
-          name: ${{ matrix.branch }}-build
+          pattern: litematica_container_filler_build.*
           path: branch-jars
 
-      - name: Publish ${{ matrix.mod_version }} to Modrinth
+      - name: Publish to Modrinth
         uses: Kira-NT/mc-publish@v3.3.0
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
           modrinth-id: oxOV4WLc
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
-          name: ${{ matrix.mod_version }}
-          version: ${{ matrix.mod_version }}
-          version-type: beta
+          name: ${{ github.event.inputs.releaseTag }}
+          version: ${{ github.event.inputs.releaseTag }}
+          version-type: ${{ github.event.inputs.modrinth_version_type }}
           loaders: fabric
-          game-versions: ${{ matrix.game_versions }}
+          game-versions: |
+            1.20.1
           game-version-filter: none
-          java: ${{ matrix.java_version }}
+          java: 17
           modrinth-featured: false
           modrinth-dependencies: |
             bEpr0Arc(required)
             GcWjdA9I(required)
           files: branch-jars/!(*-@(dev|sources|javadoc)).jar
           changelog: |
-            Published from branch `${{ matrix.branch }}`.
+            Published from branch `1.20.1`.
             Full release notes: https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.releaseTag }}
