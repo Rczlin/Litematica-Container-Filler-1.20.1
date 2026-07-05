@@ -74,7 +74,7 @@ jobs:
         env:
           FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
         with:
-          modrinth-id: oxOV4WLc
+          modrinth-id: miuEbr4p
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           name: ${{ github.event.inputs.releaseTag }}
           version: ${{ github.event.inputs.releaseTag }}
