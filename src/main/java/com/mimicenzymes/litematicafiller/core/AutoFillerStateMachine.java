@@ -1395,9 +1395,31 @@ public class AutoFillerStateMachine {
     private void openTargetContainer(MinecraftClient client, BlockPos pos) {
         if (currentTask != null && !currentTask.forcedManual && !isTargetReachable(client, pos)) {
             debug(DebugCategory.FILL_PHASE, "openTargetContainer skipped unreachable target {}", pos.toShortString());
-            AreaScanner.clearAttemptCooldown(pos);
+            // Keep cooldown so the continuous scanner doesn't immediately re-queue it
             reset();
             return;
+        }
+
+        // Pre-flight check: verify the real-world block is actually a container
+        if (client.world != null) {
+            net.minecraft.block.BlockState realState = client.world.getBlockState(pos);
+            double dist = client.player != null ? client.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(pos)) : -1;
+            if (realState == null || realState.isAir()) {
+                debug(DebugCategory.FILL_PHASE, "openTargetContainer SKIP: no block at {} (distSq={})", pos.toShortString(), String.format("%.1f", dist));
+                // Keep cooldown so the continuous scanner doesn't immediately re-queue it
+                reset();
+                return;
+            }
+            if (!ContainerBlockFilter.isContainerLike(realState, client.world, pos)) {
+                net.minecraft.block.entity.BlockEntity be = client.world.getBlockEntity(pos);
+                debug(DebugCategory.FILL_PHASE, "openTargetContainer SKIP: not a container at {} (distSq={}, block={}, be={})",
+                    pos.toShortString(), String.format("%.1f", dist),
+                    realState.getBlock(),
+                    be != null ? be.getClass().getSimpleName() : "null");
+                // Keep cooldown so the continuous scanner doesn't immediately re-queue it
+                reset();
+                return;
+            }
         }
 
         long openStart = System.nanoTime();
@@ -1421,7 +1443,7 @@ public class AutoFillerStateMachine {
         if (reach <= 0.0D) {
             reach = client.player.isCreative() ? 5.0D : 4.5D;
         }
-        double reachSq = (reach + 0.5D) * (reach + 0.5D);
+        double reachSq = (reach + 1.0D) * (reach + 1.0D);
         return client.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(pos)) <= reachSq;
     }
 
@@ -2388,6 +2410,19 @@ public class AutoFillerStateMachine {
                 if (activeShulkerSlot >= 0) {
                     int uiSlot = getPlayerInventoryMenuSlot(client.player.playerScreenHandler, client, activeShulkerSlot);
                     restoreCursorShulkerIfClickWasVanilla(client, client.player.playerScreenHandler.syncId, uiSlot);
+                }
+                // Diagnostic: log why the UI didn't open
+                if (client.world != null && currentTask != null) {
+                    BlockPos p = currentTask.targetPos;
+                    net.minecraft.block.BlockState rs = client.world.getBlockState(p);
+                    double d = client.player.getEyePos().squaredDistanceTo(Vec3d.ofCenter(p));
+                    boolean loaded = client.world.isChunkLoaded(p);
+                    boolean containerOk = ContainerBlockFilter.isContainerLike(rs, client.world, p);
+                    debug(DebugCategory.FILL_PHASE,
+                        "waitForUi TIMEOUT at {} distSq={} chunkLoaded={} block={} isContainer={}",
+                        p.toShortString(), String.format("%.1f", d), loaded,
+                        rs.isAir() ? "AIR" : rs.getBlock().toString(),
+                        containerOk);
                 }
                 abortTask(client, "litematica_container_filler.message.container_timeout", false, false);
                 return;
