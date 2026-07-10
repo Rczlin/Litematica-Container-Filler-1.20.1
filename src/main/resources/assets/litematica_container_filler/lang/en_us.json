@@ -197,7 +197,7 @@
   "litematica_container_filler.config.comment.interactionReach": "Override the player's block interaction reach distance. Set to 0 to use the vanilla default (Creative: 5, Survival: 4.5). Increase this if your server has extended reach (e.g. via Carpet playerModifier).",
   "litematica_container_filler.config.comment.renderRadius": "Render radius for missing container highlights (0 - 1024 blocks).",
   "litematica_container_filler.config.comment.syncLiteLayer": "When enabled, highlights and filling actions will only apply to containers within the current Litematica render layer.",
-  "litematica_container_filler.config.comment.enableDataSync": "Receive Servux data to view container contents through walls without opening them.",
+  "litematica_container_filler.config.comment.enableDataSync": "Receive PCA data to view container contents through walls without opening them.",
   "litematica_container_filler.config.name.cacheTtl": "Cache TTL (seconds)",
   "litematica_container_filler.config.comment.cacheTtl": "Time-to-live for container data cache entries in seconds. When a cached entry expires, the next request for that container will re-fetch data from the server.\nSet lower (e.g. 10s) for fresher data but more network requests; set higher to reduce request frequency.",
   "litematica_container_filler.config.comment.cacheEntryLimit": "Entry limit for the primary cache.\nHigher values reduce repeated requests for older containers in large builds, but use more memory.",
