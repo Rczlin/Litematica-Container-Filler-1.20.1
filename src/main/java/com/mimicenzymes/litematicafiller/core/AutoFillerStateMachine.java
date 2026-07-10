@@ -2035,7 +2035,15 @@ public class AutoFillerStateMachine {
                         dstNeedsMore = false; break;
                     }
 
+                    int curDstCount = curDst.isEmpty() ? 0 : curDst.getCount();
+                    int actualMissing = Math.min(reqStack.getCount() - curDstCount, allowed);
+                    if (actualMissing <= 0) {
+                        dstNeedsMore = false;
+                        break;
+                    }
+
                     int bestSrc = -1;
+                    int bestMoveAmount = 0;
                     for (int src = 0; src < containerSize; src++) {
                         if (src == dst) continue;
                         if (ignoredSlots.contains(src)) continue;
@@ -2047,8 +2055,18 @@ public class AutoFillerStateMachine {
 
                         if (ItemMatcher.isSameItem(srcCur, reqStack)) {
                             ItemStack srcReq = currentTask.requiredItems.getOrDefault(src, ItemStack.EMPTY);
-                            if (!ItemMatcher.isSameItem(srcCur, srcReq) || srcCur.getCount() > srcReq.getCount()) {
-                                bestSrc = src; break;
+                            int movableFromSrc = 0;
+                            if (!ItemMatcher.isSameItem(srcCur, srcReq)) {
+                                movableFromSrc = srcCur.getCount();
+                            } else if (srcCur.getCount() > srcReq.getCount()) {
+                                movableFromSrc = srcCur.getCount() - srcReq.getCount();
+                            }
+
+                            int moveAmount = Math.min(actualMissing, movableFromSrc);
+                            if (moveAmount > 0) {
+                                bestSrc = src;
+                                bestMoveAmount = moveAmount;
+                                break;
                             }
                         }
                     }
@@ -2058,12 +2076,16 @@ public class AutoFillerStateMachine {
                         int uiSrc = currentMapper.getUiSlotForContainer(bestSrc);
                         if (uiSrc < 0 || uiSrc >= handler.slots.size()) { dstNeedsMore = false; continue; }
 
-                        client.interactionManager.clickSlot(syncId, uiSrc, 0, SlotActionType.PICKUP, client.player);
-                        client.interactionManager.clickSlot(syncId, uiDst, 0, SlotActionType.PICKUP, client.player);
-                        client.interactionManager.clickSlot(syncId, uiSrc, 0, SlotActionType.PICKUP, client.player);
+                        int movedAmount = moveBetweenSlots(client, handler, syncId, uiSrc, uiDst, bestMoveAmount);
+                        if (movedAmount <= 0) {
+                            dstNeedsMore = false;
+                            continue;
+                        }
 
-                        currentTask.fillLedger.put(dst, 0);
-                        movedAny = true; swappedAnyInThisPass = true;
+                        allowed -= movedAmount;
+                        currentTask.fillLedger.put(dst, allowed);
+                        movedAny = true;
+                        swappedAnyInThisPass = true;
                         if (delay > 0) break;
                     } else {
                         dstNeedsMore = false;
@@ -2704,7 +2726,7 @@ public class AutoFillerStateMachine {
 
         if (isPassiveScreenOpen(client) && client.getNetworkHandler() != null) {
             client.getNetworkHandler().sendPacket(new CloseHandledScreenC2SPacket(handler.syncId));
-            client.player.currentScreenHandler = client.player.playerScreenHandler;
+            client.setScreen(null);
             currentMapper = null;
             mappedHandler = null;
             return;
@@ -2807,6 +2829,45 @@ public class AutoFillerStateMachine {
             }
         }
         return amountToMove;
+    }
+
+    private int moveBetweenSlots(MinecraftClient client, ScreenHandler handler, int syncId, int sourceUiSlot, int targetUiSlot, int amountToMove) {
+        if (sourceUiSlot < 0 || sourceUiSlot >= handler.slots.size() || targetUiSlot < 0 || targetUiSlot >= handler.slots.size()) return 0;
+        if (amountToMove <= 0) return 0;
+
+        ItemStack sourceStack = handler.slots.get(sourceUiSlot).getStack();
+        if (sourceStack.isEmpty()) return 0;
+
+        ItemStack targetStack = handler.slots.get(targetUiSlot).getStack();
+        int sourceCount = sourceStack.getCount();
+        int moveAmount = Math.min(amountToMove, sourceCount);
+        int targetCount = targetStack.isEmpty() ? 0 : targetStack.getCount();
+        int maxCount = targetStack.isEmpty()
+                ? Math.min(sourceStack.getMaxCount(), handler.slots.get(targetUiSlot).getMaxItemCount())
+                : Math.min(targetStack.getMaxCount(), handler.slots.get(targetUiSlot).getMaxItemCount());
+
+        if (moveAmount <= 0 || targetCount + moveAmount > maxCount) return 0;
+
+        if (moveAmount == sourceCount) {
+            client.interactionManager.clickSlot(syncId, sourceUiSlot, 0, SlotActionType.PICKUP, client.player);
+            client.interactionManager.clickSlot(syncId, targetUiSlot, 0, SlotActionType.PICKUP, client.player);
+            if (!handler.getCursorStack().isEmpty()) {
+                client.interactionManager.clickSlot(syncId, sourceUiSlot, 0, SlotActionType.PICKUP, client.player);
+            }
+        } else {
+            List<ExactMoveClick> plan = findExactMovePlan(sourceCount, targetCount, moveAmount, maxCount);
+            if (plan != null && !plan.isEmpty()) {
+                executeExactMovePlan(client, handler, sourceUiSlot, targetUiSlot, plan);
+            } else {
+                client.interactionManager.clickSlot(syncId, sourceUiSlot, 0, SlotActionType.PICKUP, client.player);
+                for (int i = 0; i < moveAmount; i++) {
+                    client.interactionManager.clickSlot(syncId, targetUiSlot, 1, SlotActionType.PICKUP, client.player);
+                }
+                client.interactionManager.clickSlot(syncId, sourceUiSlot, 0, SlotActionType.PICKUP, client.player);
+            }
+        }
+
+        return moveAmount;
     }
 
     public BlockPos getCurrentTaskPos() { return currentTask != null ? currentTask.targetPos : null; }

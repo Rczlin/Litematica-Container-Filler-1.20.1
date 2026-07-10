@@ -1604,7 +1604,7 @@ public class ContainerToolStateMachine {
 
         if (isPassiveScreenOpen(client) && client.getNetworkHandler() != null) {
             client.getNetworkHandler().sendPacket(new CloseHandledScreenC2SPacket(handler.syncId));
-            client.player.currentScreenHandler = client.player.playerScreenHandler;
+            client.setScreen(null);
             return;
         }
 

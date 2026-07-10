@@ -2,7 +2,6 @@ package com.mimicenzymes.litematicafiller.core;
 
 import com.mimicenzymes.litematicafiller.config.Configs;
 import com.mojang.serialization.DynamicOps;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -46,12 +45,11 @@ public class MaterialReplacer {
 
             if (stack.getItem() != this.item) return false;
 
-            Text customName = stack.getName();
-
             if (this.name == null) {
-                return customName == null;
+                return true;
             } else {
-                if (customName == null) return false;
+                if (!stack.hasCustomName()) return false;
+                Text customName = stack.getName();
                 return customName.getString().contains(this.name);
             }
         }
@@ -110,11 +108,22 @@ public class MaterialReplacer {
     }
 
     private static ItemRule parseRule(String str) {
+        if (str == null) {
+            return new ItemRule(Items.AIR, null, ItemStack.EMPTY);
+        }
+
+        str = str.trim();
+
         if (str.startsWith(STACK_PREFIX)) {
             ItemStack stack = decodeStack(str.substring(STACK_PREFIX.length()));
             if (!stack.isEmpty()) {
                 return new ItemRule(stack.getItem(), null, stack);
             }
+        }
+
+        ItemRule snbtRule = parseSnbtRule(str);
+        if (snbtRule != null) {
+            return snbtRule;
         }
 
         String idStr = str;
@@ -138,6 +147,36 @@ public class MaterialReplacer {
         }
 
         return new ItemRule(item, nameStr, ItemStack.EMPTY);
+    }
+
+    private static ItemRule parseSnbtRule(String str) {
+        int nbtStart = str.indexOf('{');
+        if (nbtStart <= 0 || !str.endsWith("}")) return null;
+
+        String idStr = str.substring(0, nbtStart).trim();
+        String nbtStr = str.substring(nbtStart).trim();
+        if (idStr.isEmpty() || nbtStr.isEmpty()) return null;
+
+        if (!idStr.contains(":")) {
+            idStr = "minecraft:" + idStr;
+        }
+
+        Identifier id = Identifier.tryParse(idStr);
+        if (id == null || !Registries.ITEM.containsId(id)) return null;
+
+        try {
+            NbtCompound stackNbt = StringNbtReader.parse(nbtStr);
+            stackNbt.putString("id", id.toString());
+            stackNbt.putByte("Count", (byte) 1);
+
+            ItemStack stack = ItemStack.fromNbt(stackNbt);
+            if (!stack.isEmpty()) {
+                return new ItemRule(stack.getItem(), null, stack);
+            }
+        } catch (Exception ignored) {
+        }
+
+        return null;
     }
 
     public static ItemStack replaceSingleStack(ItemStack original) {
@@ -421,9 +460,8 @@ public class MaterialReplacer {
     private static List<Replacement> parseReplacements(List<String> strings) {
         List<Replacement> replacements = new ArrayList<>();
         for (String rule : strings) {
-            if (rule == null || !rule.contains("->")) continue;
-            String[] parts = rule.split("->", 2);
-            if (parts.length != 2) continue;
+            String[] parts = splitRule(rule);
+            if (parts == null) continue;
 
             ItemRule source = parseRule(parts[0].trim());
             ItemRule target = parseRule(parts[1].trim());
@@ -438,11 +476,11 @@ public class MaterialReplacer {
     public static String stackToExactRule(ItemStack stack) {
         if (stack == null || stack.isEmpty()) return itemToLegacyRule(Items.AIR);
 
-        if (stack.getName() == null && true /* simplified NBT check */) {
-            return stackToLegacyRule(stack);
+        ItemStack normalized = normalizeStack(stack);
+        if (!normalized.hasCustomName() && !normalized.hasNbt()) {
+            return stackToLegacyRule(normalized);
         }
 
-        ItemStack normalized = normalizeStack(stack);
         DynamicOps<NbtElement> ops = getNbtOps();
         if (ops != null) {
             NbtCompound encoded = normalized.writeNbt(new NbtCompound());
@@ -468,7 +506,7 @@ public class MaterialReplacer {
         if (stack == null || stack.isEmpty()) return itemToLegacyRule(Items.AIR);
 
         String id = itemToLegacyRule(stack.getItem());
-        Text customName = stack.getName();
+        Text customName = stack.hasCustomName() ? stack.getName() : null;
         if (customName == null || customName.getString().isBlank()) {
             return id;
         }
@@ -481,12 +519,65 @@ public class MaterialReplacer {
     }
 
     public static boolean ruleSourceMatches(String rule, ItemStack source) {
-        if (rule == null || source == null || source.isEmpty() || !rule.contains("->")) return false;
+        if (rule == null || source == null || source.isEmpty()) return false;
 
-        String[] parts = rule.split("->", 2);
-        if (parts.length != 2) return false;
+        String[] parts = splitRule(rule);
+        if (parts == null) return false;
 
         return parseRule(parts[0].trim()).matches(source);
+    }
+
+    private static String[] splitRule(String rule) {
+        if (rule == null || rule.isBlank()) return null;
+
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
+        boolean escaping = false;
+        int braceDepth = 0;
+
+        for (int i = 0; i < rule.length() - 1; i++) {
+            char c = rule.charAt(i);
+
+            if (escaping) {
+                escaping = false;
+                continue;
+            }
+
+            if (c == '\\') {
+                escaping = true;
+                continue;
+            }
+
+            if (c == '\'' && !inDoubleQuote) {
+                inSingleQuote = !inSingleQuote;
+                continue;
+            }
+
+            if (c == '"' && !inSingleQuote) {
+                inDoubleQuote = !inDoubleQuote;
+                continue;
+            }
+
+            if (inSingleQuote || inDoubleQuote) {
+                continue;
+            }
+
+            if (c == '{') {
+                braceDepth++;
+                continue;
+            }
+
+            if (c == '}') {
+                braceDepth = Math.max(0, braceDepth - 1);
+                continue;
+            }
+
+            if (braceDepth == 0 && c == '-' && rule.charAt(i + 1) == '>') {
+                return new String[]{rule.substring(0, i), rule.substring(i + 2)};
+            }
+        }
+
+        return null;
     }
 
     private static ItemStack normalizeStack(ItemStack stack) {
@@ -509,8 +600,6 @@ public class MaterialReplacer {
     }
 
     private static DynamicOps<NbtElement> getNbtOps() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client == null || client.world == null) return null;
-        return null; // NbtOps no longer needed for 1.20.1
+        return NbtOps.INSTANCE;
     }
 }
