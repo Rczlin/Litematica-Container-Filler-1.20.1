@@ -16,6 +16,7 @@ import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.world.ClientWorld;
+import net.minecraft.client.gui.screen.ingame.HandledScreen;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.text.Text;
 import net.minecraft.world.World;
@@ -36,6 +37,8 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
         PcaSyncHandler.init();
         TakeItOutCompat.registerPayload();
 
+        ClientTickEvents.START_CLIENT_TICK.register(client -> sanitizeScreenHandlerMismatch(client));
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (!isGuiAutoRegistered) {
                 boolean isTitleScreen = client.currentScreen != null && client.currentScreen.getClass().getSimpleName().equals("TitleScreen");
@@ -55,6 +58,11 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
             }
 
             handleFillStateProtection(client);
+
+            if (sanitizeScreenHandlerMismatch(client)) {
+                updateFillProtectionSnapshot(client);
+                return;
+            }
 
             if (client.world != null) {
                 PcaSyncHandler.tick(client);
@@ -199,5 +207,17 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
         lastDimension = client.world == null ? null : client.world.getRegistryKey();
         lastPlayerUuid = client.player == null ? null : client.player.getUuid();
         lastPlayerAlive = client.player != null && client.player.isAlive();
+    }
+
+    private static boolean sanitizeScreenHandlerMismatch(MinecraftClient client) {
+        if (client == null || client.player == null) return false;
+        if (!(client.currentScreen instanceof HandledScreen<?> screen)) return false;
+
+        if (screen.getScreenHandler() == client.player.currentScreenHandler) {
+            return false;
+        }
+
+        client.setScreen(null);
+        return true;
     }
 }

@@ -275,6 +275,10 @@ public class ContainerToolStateMachine {
         ClickPacketRateLimiter.setOperationActive(true);
         if (ClickPacketRateLimiter.hasPendingPackets()) return;
 
+        if (prepareHiddenGuiState(client)) {
+            return;
+        }
+
         ScreenHandler handler = client.player.currentScreenHandler;
         boolean inContainer = !(handler instanceof PlayerScreenHandler);
 
@@ -1609,6 +1613,26 @@ public class ContainerToolStateMachine {
         }
 
         client.player.closeHandledScreen();
+    }
+
+    private boolean prepareHiddenGuiState(MinecraftClient client) {
+        if (client == null || client.player == null) return false;
+        if (!Configs.HIDE_TOOL_GUI.getBooleanValue()) return false;
+        if (!(client.currentScreen instanceof HandledScreen<?> screen)) return false;
+
+        if (screen.getScreenHandler() != client.player.currentScreenHandler) {
+            client.setScreen(null);
+            uiWaitTicks = Math.max(uiWaitTicks, 1);
+            return true;
+        }
+
+        if (client.player.currentScreenHandler instanceof PlayerScreenHandler) {
+            client.setScreen(null);
+            uiWaitTicks = Math.max(uiWaitTicks, 1);
+            return true;
+        }
+
+        return false;
     }
 
     private boolean isPassiveScreenOpen(MinecraftClient client) {

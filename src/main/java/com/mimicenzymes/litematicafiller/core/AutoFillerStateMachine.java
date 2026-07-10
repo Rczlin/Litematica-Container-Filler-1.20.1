@@ -876,6 +876,10 @@ public class AutoFillerStateMachine {
                 timeoutReset(client);
                 return;
             }
+
+            if (prepareHiddenGuiState(client)) {
+                return;
+            }
         }
 
         if (actionWaitTicks > 0) {
@@ -2716,6 +2720,26 @@ public class AutoFillerStateMachine {
     private boolean isPassiveScreenOpen(MinecraftClient client) {
         Screen screen = client.currentScreen;
         return screen != null && !(screen instanceof HandledScreen<?>);
+    }
+
+    private boolean prepareHiddenGuiState(MinecraftClient client) {
+        if (client == null || client.player == null) return false;
+        if (!Configs.HIDE_PROJECTION_FILL_GUI.getBooleanValue()) return false;
+        if (!(client.currentScreen instanceof HandledScreen<?> screen)) return false;
+
+        if (screen.getScreenHandler() != client.player.currentScreenHandler) {
+            client.setScreen(null);
+            actionWaitTicks = Math.max(actionWaitTicks, getDelay(1));
+            return true;
+        }
+
+        if (client.player.currentScreenHandler == client.player.playerScreenHandler) {
+            client.setScreen(null);
+            actionWaitTicks = Math.max(actionWaitTicks, getDelay(1));
+            return true;
+        }
+
+        return false;
     }
 
     private void closeHandledScreen(MinecraftClient client) {
