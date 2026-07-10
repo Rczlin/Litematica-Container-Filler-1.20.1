@@ -10,12 +10,13 @@ import net.minecraft.util.collection.DefaultedList;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public class ItemMatcher {
 
     public static boolean isSameItem(ItemStack current, ItemStack required) {
         if (current.isEmpty() || required.isEmpty()) return false;
-        if (ItemStack.areEqual(current, required)) return true;
+        if (canCombineIgnoringCount(current, required)) return true;
         return Configs.MATCH_SHULKER_BOXES_BY_CONTENT.getBooleanValue()
                 && isShulkerBox(current)
                 && isShulkerBox(required)
@@ -32,7 +33,13 @@ public class ItemMatcher {
             }
             return hash;
         }
-        return stack.hashCode();
+        int hash = stack.getItem().hashCode();
+        NbtCompound nbt = stack.getNbt();
+        return 31 * hash + Objects.hashCode(nbt);
+    }
+
+    private static boolean canCombineIgnoringCount(ItemStack current, ItemStack required) {
+        return ItemStack.canCombine(current, required);
     }
 
     private static boolean hasSameContainerContents(ItemStack current, ItemStack required) {

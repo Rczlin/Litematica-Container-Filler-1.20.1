@@ -380,12 +380,6 @@ public class AutoFillerStateMachine {
 
         Map<Integer, ItemStack> trueData = getTrueContainerData(client, pos);
         if (trueData == null) {
-            Set<Item> missingTypes = getUnavailableMissingTypes(client, pos, requiredItems, null);
-            if (!missingTypes.isEmpty()) {
-                markMissingMaterials(pos, missingTypes);
-                failedContainers.put(pos, missingTypes);
-                return false;
-            }
             if (!ensureQueueSpace(client, pos, preferNearby)) return false;
             // 当 DATA_SYNC 关闭且不在单机且 PCA 未启用时，不会有异步数据到达，跳过 AWAITING_DATA 直接开箱
             boolean canAwaitAsyncData = client.isInSingleplayer()
@@ -429,13 +423,6 @@ public class AutoFillerStateMachine {
         }
 
         if (!needsAction && !ManualContainerOverrideManager.isNeedsFill(pos)) return false;
-
-        Set<Item> unavailable = getUnavailableMissingTypes(client, pos, requiredItems, missingItems);
-        if (!unavailable.isEmpty() && !hasExtractableGarbage(pos, requiredItems, trueData, isCrafter, ignoredSlots)) {
-            markMissingMaterials(pos, unavailable);
-            failedContainers.put(pos, unavailable);
-            return false;
-        }
 
         if (!ensureQueueSpace(client, pos, preferNearby)) return false;
         taskQueue.add(new FillTask(pos, requiredItems, missingItems, false, false));
