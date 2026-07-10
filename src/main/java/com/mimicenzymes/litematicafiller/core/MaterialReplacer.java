@@ -165,11 +165,9 @@ public class MaterialReplacer {
         if (id == null || !Registries.ITEM.containsId(id)) return null;
 
         try {
-            NbtCompound stackNbt = StringNbtReader.parse(nbtStr);
-            stackNbt.putString("id", id.toString());
-            stackNbt.putByte("Count", (byte) 1);
-
-            ItemStack stack = ItemStack.fromNbt(stackNbt);
+            NbtCompound parsedNbt = StringNbtReader.parse(nbtStr);
+            Item item = Registries.ITEM.get(id);
+            ItemStack stack = createExactStackFromParsedSnbt(item, id, parsedNbt);
             if (!stack.isEmpty()) {
                 return new ItemRule(stack.getItem(), null, stack);
             }
@@ -177,6 +175,23 @@ public class MaterialReplacer {
         }
 
         return null;
+    }
+
+    private static ItemStack createExactStackFromParsedSnbt(Item item, Identifier id, NbtCompound parsedNbt) {
+        if (item == null || item == Items.AIR) return ItemStack.EMPTY;
+
+        if (parsedNbt.contains("id") || parsedNbt.contains("Count") || parsedNbt.contains("tag")) {
+            NbtCompound stackNbt = parsedNbt.copy();
+            stackNbt.putString("id", id.toString());
+            stackNbt.putByte("Count", (byte) 1);
+            return ItemStack.fromNbt(stackNbt);
+        }
+
+        ItemStack stack = new ItemStack(item);
+        if (!parsedNbt.isEmpty()) {
+            stack.setNbt(parsedNbt.copy());
+        }
+        return stack;
     }
 
     public static ItemStack replaceSingleStack(ItemStack original) {
