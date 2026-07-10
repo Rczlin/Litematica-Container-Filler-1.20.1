@@ -96,6 +96,8 @@ public class AutoFillerStateMachine {
     private static final int MAX_ACTIONS_PER_TICK = 24;
     private static final int MAX_QUEUE_PREPARES_PER_TICK = 4;
     private static final int QUEUE_PREPARE_INTERVAL_TICKS = 2;
+    private static final int MAX_UI_OPEN_RETRIES = 2;
+    private static final int MAX_PASSIVE_SCREEN_STALL_TICKS = 20;
     private static final long MISSING_MATERIAL_MARKER_MS = 1200L;
     private static final long TICK_MS = 50L;
 
@@ -113,6 +115,8 @@ public class AutoFillerStateMachine {
     private int actionWaitTicks = 0;
     private int watchdogTimer = 0;
     private int uiWaitTimer = 0;
+    private int uiOpenRetryCount = 0;
+    private int passiveScreenWaitTicks = 0;
     private int dataWaitTimer = 0;
     private boolean silentlyExtracting = false;
     private boolean yieldTick = false;
@@ -268,6 +272,8 @@ public class AutoFillerStateMachine {
 
         this.currentPhase = newPhase;
         this.guiOpenedForPhase = false;
+        this.uiOpenRetryCount = 0;
+        this.passiveScreenWaitTicks = 0;
         this.debugPhaseStartMs = now;
         this.debugPhaseActionCount = 0;
 
@@ -947,7 +953,6 @@ public class AutoFillerStateMachine {
         if (actionWaitTicks <= 0 && actionQueue.isEmpty() && currentTask != null && !yieldTick) {
             ScreenHandler currentHandler = client.player.currentScreenHandler;
             boolean inGui = currentHandler != client.player.playerScreenHandler;
-            boolean passiveScreenOpen = isPassiveScreenOpen(client);
 
             switch (currentPhase) {
                 case AWAITING_DATA:
@@ -980,12 +985,13 @@ public class AutoFillerStateMachine {
                         if (!guiOpenedForPhase) {
                             openTargetContainer(client, currentTask.targetPos);
                             guiOpenedForPhase = true;
-                        } else if (passiveScreenOpen) {
-                            yieldTick = true;
+                        } else if (handlePassiveScreenStall(client, "inspect-target")) {
+                            break;
                         } else {
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
+                        passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         if (!silentlyExtracting) doInspectionPhase(client);
                     }
@@ -996,12 +1002,13 @@ public class AutoFillerStateMachine {
                         if (!guiOpenedForPhase) {
                             openShulkerBox(client, stashShulkerSlot);
                             guiOpenedForPhase = true;
-                        } else if (passiveScreenOpen) {
-                            yieldTick = true;
+                        } else if (handlePassiveScreenStall(client, "stash-shulker")) {
+                            break;
                         } else {
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
+                        passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         if (silentlyExtracting) doStashPhase(client);
                     }
@@ -1016,12 +1023,13 @@ public class AutoFillerStateMachine {
                                 openShulkerBox(client, pendingShulkers.poll());
                                 guiOpenedForPhase = true;
                             }
-                        } else if (passiveScreenOpen) {
-                            yieldTick = true;
+                        } else if (handlePassiveScreenStall(client, "gather-shulker")) {
+                            break;
                         } else {
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
+                        passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         if (silentlyExtracting) doShulkerExtractionPhase(client);
                     }
@@ -1033,14 +1041,15 @@ public class AutoFillerStateMachine {
                             debugFillingTickState(client, "dispatch-open-target");
                             openTargetContainer(client, currentTask.targetPos);
                             guiOpenedForPhase = true;
-                        } else if (passiveScreenOpen) {
+                        } else if (handlePassiveScreenStall(client, "fill-target")) {
                             debugFillingTickState(client, "passive-screen-open");
-                            yieldTick = true;
+                            break;
                         } else {
                             debugFillingTickState(client, "user-aborted-no-gui");
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
+                        passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         debugFillingTickState(client, "gui-ready");
                         if (!silentlyExtracting) {
@@ -1061,12 +1070,13 @@ public class AutoFillerStateMachine {
                                 openShulkerBox(client, pendingShulkers.poll());
                                 guiOpenedForPhase = true;
                             }
-                        } else if (passiveScreenOpen) {
-                            yieldTick = true;
+                        } else if (handlePassiveScreenStall(client, "return-shulker")) {
+                            break;
                         } else {
                             abortTask(client, "litematica_container_filler.message.user_aborted", false, false);
                         }
                     } else {
+                        passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         if (silentlyExtracting) returnBorrowedAndStashedItems(client);
                     }
@@ -2406,6 +2416,64 @@ public class AutoFillerStateMachine {
         actionQueue.add(() -> actionWaitTicks = getDelay(1));
     }
 
+    private boolean retryPendingUiOpen(MinecraftClient client) {
+        if (client == null || client.player == null) return false;
+        if (uiOpenRetryCount >= MAX_UI_OPEN_RETRIES) return false;
+
+        uiOpenRetryCount++;
+        actionQueue.clear();
+        uiWaitTimer = 0;
+
+        if (activeShulkerSlot >= 0) {
+            int uiSlot = getPlayerInventoryMenuSlot(client.player.playerScreenHandler, client, activeShulkerSlot);
+            restoreCursorShulkerIfClickWasVanilla(client, client.player.playerScreenHandler.syncId, uiSlot);
+        }
+
+        switch (currentPhase) {
+            case INSPECTING, FILLING -> {
+                if (currentTask == null) return false;
+                debug(DebugCategory.FILL_PHASE, "Retrying target open for {} phase={} attempt={}",
+                    currentTask.targetPos.toShortString(), currentPhase.name(), uiOpenRetryCount);
+                openTargetContainer(client, currentTask.targetPos);
+                return true;
+            }
+            case STASHING, GATHERING, RETURNING -> {
+                if (activeShulkerSlot < 0) return false;
+                debug(DebugCategory.FILL_PHASE, "Retrying shulker open for slot={} phase={} attempt={}",
+                    activeShulkerSlot, currentPhase.name(), uiOpenRetryCount);
+                openShulkerBox(client, activeShulkerSlot);
+                return true;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    private boolean handlePassiveScreenStall(MinecraftClient client, String reason) {
+        if (!isPassiveScreenOpen(client)) {
+            passiveScreenWaitTicks = 0;
+            return false;
+        }
+
+        if (++passiveScreenWaitTicks <= MAX_PASSIVE_SCREEN_STALL_TICKS) {
+            debug(DebugCategory.FILL_PHASE, "Passive screen blocking phase={} reason={} tick={}",
+                currentPhase.name(), reason, passiveScreenWaitTicks);
+            yieldTick = true;
+            return true;
+        }
+
+        debug(DebugCategory.FILL_PHASE, "Clearing passive screen after stall phase={} reason={} screen={}",
+            currentPhase.name(), reason, debugScreenName(client));
+        passiveScreenWaitTicks = 0;
+        uiWaitTimer = 0;
+        uiOpenRetryCount = 0;
+        guiOpenedForPhase = false;
+        client.setScreen(null);
+        actionWaitTicks = Math.max(actionWaitTicks, getDelay(1));
+        return true;
+    }
+
     private void waitForUi() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null && client.player.currentScreenHandler == client.player.playerScreenHandler) {
@@ -2420,6 +2488,9 @@ public class AutoFillerStateMachine {
                     debugScreenName(client));
             }
             if (uiWaitTimer > 20) {
+                if (retryPendingUiOpen(client)) {
+                    return;
+                }
                 if (activeShulkerSlot >= 0) {
                     int uiSlot = getPlayerInventoryMenuSlot(client.player.playerScreenHandler, client, activeShulkerSlot);
                     restoreCursorShulkerIfClickWasVanilla(client, client.player.playerScreenHandler.syncId, uiSlot);
@@ -2432,10 +2503,11 @@ public class AutoFillerStateMachine {
                     boolean loaded = client.world.isChunkLoaded(p);
                     boolean containerOk = ContainerBlockFilter.isContainerLike(rs, client.world, p);
                     debug(DebugCategory.FILL_PHASE,
-                        "waitForUi TIMEOUT at {} distSq={} chunkLoaded={} block={} isContainer={}",
+                        "waitForUi TIMEOUT at {} distSq={} chunkLoaded={} block={} isContainer={} retries={}",
                         p.toShortString(), String.format("%.1f", d), loaded,
                         rs.isAir() ? "AIR" : rs.getBlock().toString(),
-                        containerOk);
+                        containerOk,
+                        uiOpenRetryCount);
                 }
                 abortTask(client, "litematica_container_filler.message.container_timeout", false, false);
                 return;
@@ -2452,6 +2524,7 @@ public class AutoFillerStateMachine {
                     debugScreenName(client));
             }
             uiWaitTimer = 0;
+            uiOpenRetryCount = 0;
         }
     }
 
@@ -2472,6 +2545,8 @@ public class AutoFillerStateMachine {
         consecutiveFailures = 0;
         cursorStuckAttempts = 0;
         uiWaitTimer = 0;
+        uiOpenRetryCount = 0;
+        passiveScreenWaitTicks = 0;
         dataWaitTimer = 0;
         activeShulkerSlot = -1;
         stashShulkerSlot = -1;
