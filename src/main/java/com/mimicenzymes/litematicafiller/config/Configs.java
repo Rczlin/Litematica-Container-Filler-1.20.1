@@ -376,13 +376,15 @@ public class Configs implements IConfigHandler {
             ConfigUtils.writeConfigBase(root, "Hotkeys", Hotkeys.HOTKEY_LIST);
             JsonUtils.writeJsonToFile(root, new File(dir, CONFIG_FILE_NAME));
         }
-
-        InputHandler.getInstance().addKeysToMap(InputEventHandler.getKeybindManager());
     }
     public static void init() {
         Configs.INSTANCE.load();
         ConfigManager.getInstance().registerConfigHandler(Reference.MOD_ID, Configs.INSTANCE);
         InputEventHandler.getKeybindManager().registerKeybindProvider(InputHandler.getInstance());
+        // Register keybinds once at init time. Doing this inside save() would mutate
+        // malilib's hotkeyMap while InputEventHandler is iterating it on the key press
+        // that triggered the save, throwing ConcurrentModificationException.
+        InputHandler.getInstance().addKeysToMap(InputEventHandler.getKeybindManager());
         InputEventHandler.getInputManager().registerKeyboardInputHandler(InputHandler.getInstance());
         // malilib Registry.CONFIG_SCREEN not available in 1.20.1 malilib
     }
