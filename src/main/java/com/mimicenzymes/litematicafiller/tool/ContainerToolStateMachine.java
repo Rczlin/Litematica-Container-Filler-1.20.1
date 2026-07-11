@@ -857,9 +857,7 @@ public class ContainerToolStateMachine {
         if (!openedByTool) {
             openedByTool = true;
             uiWaitTicks = 0;
-            if (getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK) {
-                directRightClickPlayerSlot(client, packingShulkerSlot);
-            } else if (!shulkerExtractor.requestOpenShulker(packingShulkerSlot)) {
+            if (!requestShulkerOpen(client, packingShulkerSlot)) {
                 failPackingSupport(client);
             }
         } else if (++uiWaitTicks > 20) {
@@ -879,9 +877,7 @@ public class ContainerToolStateMachine {
 
         openedByTool = true;
         uiWaitTicks = 0;
-        if (getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK) {
-            directRightClickPlayerSlot(client, syncActiveShulkerSlot);
-        } else if (!shulkerExtractor.requestOpenShulker(syncActiveShulkerSlot)) {
+        if (!requestShulkerOpen(client, syncActiveShulkerSlot)) {
             fail(client, "litematica_container_filler.message.tool_missing_items_for_sync");
         }
     }
@@ -1457,6 +1453,21 @@ public class ContainerToolStateMachine {
     private boolean canOpenShulkerUi() {
         if (!Configs.ENABLE_QS_EXTRACTION.getBooleanValue()) return false;
         return getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK || DependencyChecker.HAS_QUICK_SHULKER;
+    }
+
+    private boolean requestShulkerOpen(MinecraftClient client, int playerSlot) {
+        if (playerSlot < 0) return false;
+
+        if (DependencyChecker.HAS_QUICK_SHULKER) {
+            return shulkerExtractor.requestOpenShulker(playerSlot);
+        }
+
+        if (getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK) {
+            directRightClickPlayerSlot(client, playerSlot);
+            return true;
+        }
+
+        return false;
     }
 
     private boolean tryStartSyncTakeItOutFetch(MinecraftClient client, List<ItemStack> needed) {

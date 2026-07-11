@@ -1473,11 +1473,7 @@ public class AutoFillerStateMachine {
     }
 
     private void openQueuedShulker(MinecraftClient client, int slot) {
-        if (getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK) {
-            simulateOpenShulkerClick(client, slot);
-        } else {
-            shulkerExtractor.requestOpenShulker(slot);
-        }
+        requestShulkerOpen(client, slot);
     }
 
     private boolean currentCrafterNeedsLocking(MinecraftClient client) {
@@ -1509,6 +1505,21 @@ public class AutoFillerStateMachine {
             return mode;
         }
         return QuickShulkerOpenMode.INVOKE;
+    }
+
+    private boolean requestShulkerOpen(MinecraftClient client, int playerSlot) {
+        if (playerSlot < 0) return false;
+
+        if (DependencyChecker.HAS_QUICK_SHULKER) {
+            return shulkerExtractor.requestOpenShulker(playerSlot);
+        }
+
+        if (getQuickShulkerOpenMode() == QuickShulkerOpenMode.SIMULATE_CLICK) {
+            simulateOpenShulkerClick(client, playerSlot);
+            return true;
+        }
+
+        return false;
     }
 
     private void simulateOpenShulkerClick(MinecraftClient client, int playerSlot) {
