@@ -842,6 +842,14 @@ public class AutoFillerStateMachine {
         reset();
     }
 
+    public void failSafeStop() {
+        taskQueue.clear();
+        failedContainers.clear();
+        blacklistedSlots.clear();
+        ClickPacketRateLimiter.reset();
+        reset();
+    }
+
     public void tick(MinecraftClient client) {
         if (client.player == null || client.world == null) { reset(); return; }
         ClickPacketRateLimiter.setOperationActive(isWorking());
@@ -993,7 +1001,11 @@ public class AutoFillerStateMachine {
                     } else {
                         passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
-                        if (!silentlyExtracting) doInspectionPhase(client);
+                        if (!isExpectedTargetHandler(client, currentHandler)) {
+                            stopForUnexpectedScreen(client, "inspect-target");
+                        } else if (!silentlyExtracting) {
+                            doInspectionPhase(client);
+                        }
                     }
                     break;
 
@@ -1010,7 +1022,11 @@ public class AutoFillerStateMachine {
                     } else {
                         passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
-                        if (silentlyExtracting) doStashPhase(client);
+                        if (!isExpectedShulkerHandler(client, currentHandler)) {
+                            stopForUnexpectedScreen(client, "stash-shulker");
+                        } else if (silentlyExtracting) {
+                            doStashPhase(client);
+                        }
                     }
                     break;
 
@@ -1031,7 +1047,11 @@ public class AutoFillerStateMachine {
                     } else {
                         passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
-                        if (silentlyExtracting) doShulkerExtractionPhase(client);
+                        if (!isExpectedShulkerHandler(client, currentHandler)) {
+                            stopForUnexpectedScreen(client, "gather-shulker");
+                        } else if (silentlyExtracting) {
+                            doShulkerExtractionPhase(client);
+                        }
                     }
                     break;
 
@@ -1052,7 +1072,9 @@ public class AutoFillerStateMachine {
                         passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
                         debugFillingTickState(client, "gui-ready");
-                        if (!silentlyExtracting) {
+                        if (!isExpectedTargetHandler(client, currentHandler)) {
+                            stopForUnexpectedScreen(client, "fill-target");
+                        } else if (!silentlyExtracting) {
                             if (currentMapper == null || mappedHandler != currentHandler) {
                                 currentMapper = new SlotMapper(currentHandler, client.player.getInventory());
                                 mappedHandler = currentHandler;
@@ -1078,7 +1100,11 @@ public class AutoFillerStateMachine {
                     } else {
                         passiveScreenWaitTicks = 0;
                         guiOpenedForPhase = true;
-                        if (silentlyExtracting) returnBorrowedAndStashedItems(client);
+                        if (!isExpectedShulkerHandler(client, currentHandler)) {
+                            stopForUnexpectedScreen(client, "return-shulker");
+                        } else if (silentlyExtracting) {
+                            returnBorrowedAndStashedItems(client);
+                        }
                     }
                     break;
 
@@ -1304,7 +1330,17 @@ public class AutoFillerStateMachine {
 
     private void doStashPhase(MinecraftClient client) {
         ScreenHandler h = client.player.currentScreenHandler;
-        int uiSlot = stashItemSlot < 9 ? stashItemSlot + 54 : stashItemSlot + 18;
+        if (!isExpectedShulkerHandler(client, h)) {
+            stopForUnexpectedScreen(client, "stash-action");
+            return;
+        }
+
+        SlotMapper mapper = new SlotMapper(h, client.player.getInventory());
+        int uiSlot = mapper.getUiSlotForPlayer(stashItemSlot);
+        if (uiSlot < 0 || uiSlot >= h.slots.size()) {
+            stopForUnexpectedScreen(client, "stash-player-slot");
+            return;
+        }
 
         ItemStack stackToStash = h.slots.get(uiSlot).getStack();
         if (!stackToStash.isEmpty()) {
@@ -1394,6 +1430,10 @@ public class AutoFillerStateMachine {
     }
 
     private void openTargetContainer(MinecraftClient client, BlockPos pos) {
+        if (client == null || client.player == null || client.world == null || client.interactionManager == null || pos == null) {
+            failSafeStop();
+            return;
+        }
         if (currentTask != null && !currentTask.forcedManual && !isTargetReachable(client, pos)) {
             debug(DebugCategory.FILL_PHASE, "openTargetContainer skipped unreachable target {}", pos.toShortString());
             // Keep cooldown so the continuous scanner doesn't immediately re-queue it
@@ -1449,6 +1489,10 @@ public class AutoFillerStateMachine {
     }
 
     private void openShulkerBox(MinecraftClient client, int slot) {
+        if (!isValidShulkerSlot(client, slot)) {
+            failSafeStop();
+            return;
+        }
         long openStart = System.nanoTime();
         silentlyExtracting = true;
         activeShulkerSlot = slot;
@@ -1508,7 +1552,7 @@ public class AutoFillerStateMachine {
     }
 
     private boolean requestShulkerOpen(MinecraftClient client, int playerSlot) {
-        if (playerSlot < 0) return false;
+        if (!isValidShulkerSlot(client, playerSlot)) return false;
 
         if (DependencyChecker.HAS_QUICK_SHULKER) {
             return shulkerExtractor.requestOpenShulker(playerSlot);
@@ -1532,7 +1576,7 @@ public class AutoFillerStateMachine {
 
         ScreenHandler handler = client.player.currentScreenHandler;
         int uiSlot = getPlayerInventoryMenuSlot(handler, client, playerSlot);
-        if (uiSlot >= 0) {
+        if (uiSlot >= 0 && uiSlot < handler.slots.size()) {
             client.interactionManager.clickSlot(handler.syncId, uiSlot, 1, SlotActionType.PICKUP, client.player);
         }
     }
@@ -1542,6 +1586,7 @@ public class AutoFillerStateMachine {
 
         ScreenHandler handler = client.player.currentScreenHandler;
         if (handler != client.player.playerScreenHandler) return;
+        if (uiSlot < 0 || uiSlot >= handler.slots.size()) return;
 
         ItemStack cursor = handler.getCursorStack();
         if (cursor.getItem() instanceof BlockItem bi && bi.getBlock() instanceof ShulkerBoxBlock) {
@@ -1550,12 +1595,13 @@ public class AutoFillerStateMachine {
     }
 
     private int getPlayerInventoryMenuSlot(ScreenHandler handler, MinecraftClient client, int playerSlot) {
+        if (handler == null || client == null || client.player == null || playerSlot < 0 || playerSlot >= 36) return -1;
         for (Slot slot : handler.slots) {
             if (slot.inventory == client.player.getInventory() && slot.getIndex() == playerSlot) {
                 return slot.id;
             }
         }
-        return playerSlot < 9 ? playerSlot + 36 : playerSlot;
+        return -1;
     }
 
     private boolean tryTakeItOutFetch(MinecraftClient client, List<ItemStack> needed) {
@@ -1643,6 +1689,10 @@ public class AutoFillerStateMachine {
     private void doShulkerExtractionPhase(MinecraftClient client) {
         long extractionStart = System.nanoTime();
         ScreenHandler h = client.player.currentScreenHandler;
+        if (!isExpectedShulkerHandler(client, h)) {
+            stopForUnexpectedScreen(client, "extract-action");
+            return;
+        }
         Set<Integer> usedEmptySlots = new HashSet<>();
         List<ItemStack> needed = computeNeededToFetch(client);
 
@@ -1963,6 +2013,10 @@ public class AutoFillerStateMachine {
     }
 
     private void executeBurstFill(MinecraftClient client, ScreenHandler handler) {
+        if (!isExpectedTargetHandler(client, handler)) {
+            stopForUnexpectedScreen(client, "fill-action");
+            return;
+        }
         long stepStartMs = Configs.DEBUG_MODE.getBooleanValue() ? System.currentTimeMillis() : 0;
         // Track fill tick breakdown: extract/swap vs creative vs player-inv fill
         long t0 = stepStartMs;
@@ -2365,6 +2419,10 @@ public class AutoFillerStateMachine {
 
     private void returnBorrowedAndStashedItems(MinecraftClient client) {
         ScreenHandler h = client.player.currentScreenHandler;
+        if (!isExpectedShulkerHandler(client, h)) {
+            stopForUnexpectedScreen(client, "return-action");
+            return;
+        }
         boolean movedAny = false;
 
         for (int i = h.slots.size() - 36; i < h.slots.size(); i++) {
@@ -2843,6 +2901,41 @@ public class AutoFillerStateMachine {
         }
 
         client.player.closeHandledScreen();
+    }
+
+    private boolean isExpectedTargetHandler(MinecraftClient client, ScreenHandler handler) {
+        return currentTask != null && RealContainerCache.isHandlerForTarget(client, handler, currentTask.targetPos);
+    }
+
+    private boolean isExpectedShulkerHandler(MinecraftClient client, ScreenHandler handler) {
+        if (!isValidShulkerSlot(client, activeShulkerSlot) || handler == null) return false;
+
+        int containerSlots = 0;
+        int playerSlots = 0;
+        for (Slot slot : handler.slots) {
+            if (slot.inventory == null || !slot.isEnabled()) continue;
+            if (slot.inventory == client.player.getInventory()) {
+                playerSlots++;
+            } else {
+                containerSlots++;
+            }
+        }
+        return containerSlots == 27 && playerSlots == 36;
+    }
+
+    private boolean isValidShulkerSlot(MinecraftClient client, int playerSlot) {
+        return client != null && client.player != null && playerSlot >= 0 && playerSlot < 36
+                && isShulkerBox(client.player.getInventory().getStack(playerSlot));
+    }
+
+    private void stopForUnexpectedScreen(MinecraftClient client, String context) {
+        debug(DebugCategory.FILL_PHASE, "Stopping task because the open screen is not the expected {} screen", context);
+        sendFeedback(client, Text.translatable("litematica_container_filler.message.user_aborted").getString(), true);
+        actionQueue.clear();
+        if (client != null && client.player != null && client.player.currentScreenHandler != client.player.playerScreenHandler) {
+            closeHandledScreen(client);
+        }
+        reset();
     }
 
     private boolean hasItemAnywhere(MinecraftClient client, ItemStack target) {

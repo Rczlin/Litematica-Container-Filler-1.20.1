@@ -184,6 +184,11 @@ public class ContainerToolStateMachine {
         resetContinuousTriggerState();
     }
 
+    public void failSafeStop(MinecraftClient client) {
+        reset(client, false, true);
+        resetContinuousTriggerState();
+    }
+
     public void triggerCurrent(MinecraftClient client) {
         if (!Configs.ENABLE_MOD.getBooleanValue()) {
             return;
@@ -281,6 +286,15 @@ public class ContainerToolStateMachine {
 
         ScreenHandler handler = client.player.currentScreenHandler;
         boolean inContainer = !(handler instanceof PlayerScreenHandler);
+
+        if (inContainer && requiresTargetHandler() && !isExpectedTargetHandler(client, handler)) {
+            cancelForUnexpectedScreen(client);
+            return;
+        }
+        if (inContainer && requiresShulkerHandler() && !isExpectedShulkerHandler(client, handler)) {
+            cancelForUnexpectedScreen(client);
+            return;
+        }
 
         switch (phase) {
             case OPENING_TEMPLATE -> {
@@ -570,6 +584,10 @@ public class ContainerToolStateMachine {
     }
 
     private void openContainer(MinecraftClient client, BlockPos pos) {
+        if (client == null || client.player == null || client.world == null || client.interactionManager == null || pos == null) {
+            failSafeStop(client);
+            return;
+        }
         uiWaitTicks = 0;
         BlockHitResult hit = new BlockHitResult(Vec3d.ofCenter(pos), Direction.UP, pos, false);
         client.interactionManager.interactBlock(client.player, Hand.MAIN_HAND, hit);
@@ -1230,12 +1248,13 @@ public class ContainerToolStateMachine {
     }
 
     private int getPlayerInventoryMenuSlot(ScreenHandler handler, MinecraftClient client, int playerSlot) {
+        if (handler == null || client == null || client.player == null || playerSlot < 0 || playerSlot >= 36) return -1;
         for (Slot slot : handler.slots) {
             if (slot.inventory == client.player.getInventory() && slot.getIndex() == playerSlot) {
                 return slot.id;
             }
         }
-        return playerSlot < 9 ? playerSlot + 36 : playerSlot;
+        return -1;
     }
 
     private int countItemInPlayerInv(MinecraftClient client, ItemStack target) {
@@ -1456,7 +1475,8 @@ public class ContainerToolStateMachine {
     }
 
     private boolean requestShulkerOpen(MinecraftClient client, int playerSlot) {
-        if (playerSlot < 0) return false;
+        if (client == null || client.player == null || playerSlot < 0 || playerSlot >= 36 ||
+                !isShulkerBox(client.player.getInventory().getStack(playerSlot))) return false;
 
         if (DependencyChecker.HAS_QUICK_SHULKER) {
             return shulkerExtractor.requestOpenShulker(playerSlot);
@@ -1535,7 +1555,7 @@ public class ContainerToolStateMachine {
 
         ScreenHandler handler = client.player.currentScreenHandler;
         int uiSlot = getPlayerInventoryMenuSlot(handler, client, playerSlot);
-        if (uiSlot >= 0) {
+        if (uiSlot >= 0 && uiSlot < handler.slots.size()) {
             client.interactionManager.clickSlot(handler.syncId, uiSlot, 1, SlotActionType.PICKUP, client.player);
             restoreCursorShulkerIfClickWasVanilla(client, handler.syncId, uiSlot);
         }
@@ -1545,6 +1565,7 @@ public class ContainerToolStateMachine {
         if (client.player == null) return;
         ScreenHandler handler = client.player.currentScreenHandler;
         if (handler != client.player.playerScreenHandler) return;
+        if (uiSlot < 0 || uiSlot >= handler.slots.size()) return;
 
         if (isShulkerBox(handler.getCursorStack())) {
             client.interactionManager.clickSlot(syncId, uiSlot, 0, SlotActionType.PICKUP, client.player);
@@ -1649,6 +1670,46 @@ public class ContainerToolStateMachine {
     private boolean isPassiveScreenOpen(MinecraftClient client) {
         Screen screen = client.currentScreen;
         return screen != null && !(screen instanceof HandledScreen<?>);
+    }
+
+    private boolean requiresTargetHandler() {
+        return phase == Phase.OPENING_TEMPLATE || phase == Phase.OPENING_TARGET || phase == Phase.PROCESSING;
+    }
+
+    private boolean requiresShulkerHandler() {
+        return phase == Phase.OPENING_SYNC_SHULKER || phase == Phase.EXTRACTING_SYNC_SHULKER ||
+                phase == Phase.OPENING_PACK_SHULKER || phase == Phase.PACKING_SHULKER;
+    }
+
+    private boolean isExpectedTargetHandler(MinecraftClient client, ScreenHandler handler) {
+        return currentPos != null && RealContainerCache.isHandlerForTarget(client, handler, currentPos);
+    }
+
+    private boolean isExpectedShulkerHandler(MinecraftClient client, ScreenHandler handler) {
+        int shulkerSlot = phase == Phase.OPENING_PACK_SHULKER || phase == Phase.PACKING_SHULKER
+                ? packingShulkerSlot
+                : syncActiveShulkerSlot;
+        if (client == null || client.player == null || handler == null || shulkerSlot < 0 || shulkerSlot >= 36 ||
+                !isShulkerBox(client.player.getInventory().getStack(shulkerSlot))) {
+            return false;
+        }
+
+        int containerSlots = 0;
+        int playerSlots = 0;
+        for (Slot slot : handler.slots) {
+            if (slot.inventory == null || !slot.isEnabled()) continue;
+            if (slot.inventory == client.player.getInventory()) {
+                playerSlots++;
+            } else {
+                containerSlots++;
+            }
+        }
+        return containerSlots == 27 && playerSlots == 36;
+    }
+
+    private void cancelForUnexpectedScreen(MinecraftClient client) {
+        send(client, "litematica_container_filler.message.tool_cancelled");
+        reset(client, true, true);
     }
 
     private void scheduleContinuousCooldown() {

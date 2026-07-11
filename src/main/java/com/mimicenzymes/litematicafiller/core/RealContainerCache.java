@@ -179,6 +179,18 @@ public class RealContainerCache {
         updateFromHandler(client, handler, containerInv);
     }
 
+    public static boolean isHandlerForTarget(MinecraftClient client, ScreenHandler handler, BlockPos pos) {
+        if (isIgnoredHandlerType(client, handler) || pos == null || !isCacheableTargetContainer(client, pos)) {
+            return false;
+        }
+
+        Inventory containerInv = findPrimaryContainerInventory(client, handler);
+        if (containerInv == null) return false;
+
+        BlockPos resolvedPos = resolveHandlerTargetPos(client, handler, containerInv);
+        return pos.equals(resolvedPos) && isPlausibleSlotCountForTarget(client, pos, containerInv.size());
+    }
+
     private static long updateFromHandler(MinecraftClient client, ScreenHandler handler, Inventory containerInv) {
         BlockPos pos = resolveHandlerTargetPos(client, handler, containerInv);
         if (pos == null) return Long.MIN_VALUE;

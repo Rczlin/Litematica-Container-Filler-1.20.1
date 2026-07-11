@@ -7,6 +7,8 @@ import com.mimicenzymes.litematicafiller.tool.ContainerToolStateMachine;
 import com.mimicenzymes.litematicafiller.network.ClickPacketRateLimiter;
 import com.mimicenzymes.litematicafiller.network.PcaSyncHandler;
 import com.mimicenzymes.litematicafiller.network.TakeItOutCompat;
+import com.mimicenzymes.litematicafiller.log.DebugCategory;
+import com.mimicenzymes.litematicafiller.log.LcfLogger;
 
 import fi.dy.masa.malilib.event.InitializationHandler;
 
@@ -83,12 +85,30 @@ public class LitematicaContainerFillerClient implements ClientModInitializer {
                     return;
                 }
                 if (fillerActive || !filler.isIdle()) {
-                    filler.tick(client);
+                    try {
+                        filler.tick(client);
+                    } catch (RuntimeException e) {
+                        LcfLogger.error(DebugCategory.FILL_PHASE, "Auto filler stopped after an unexpected tick error", e);
+                        Configs.WORKING_STATE.setBooleanValue(false);
+                        filler.failSafeStop();
+                        if (client.player != null) {
+                            client.player.sendMessage(Text.translatable("litematica_container_filler.message.user_aborted"), true);
+                        }
+                    }
                 } else {
                     ClickPacketRateLimiter.setOperationActive(false);
                 }
                 if (toolActive) {
-                    tool.tick(client);
+                    try {
+                        tool.tick(client);
+                    } catch (RuntimeException e) {
+                        LcfLogger.error(DebugCategory.FILL_PHASE, "Container tool stopped after an unexpected tick error", e);
+                        Configs.TOOL_ENABLED.setBooleanValue(false);
+                        tool.failSafeStop(client);
+                        if (client.player != null) {
+                            client.player.sendMessage(Text.translatable("litematica_container_filler.message.tool_cancelled"), true);
+                        }
+                    }
                 }
                 if (handleClickPacketOverflow(client, filler, tool)) {
                     updateFillProtectionSnapshot(client);
