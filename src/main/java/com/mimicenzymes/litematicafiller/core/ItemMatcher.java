@@ -4,9 +4,9 @@ import com.mimicenzymes.litematicafiller.config.Configs;
 import net.minecraft.block.ShulkerBoxBlock;
 import net.minecraft.item.BlockItem;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.nbt.NbtElement;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.item.ItemStack;
-import net.minecraft.util.collection.DefaultedList;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,22 +59,26 @@ public class ItemMatcher {
     }
 
     private static List<ItemStack> getContainerSlots(ItemStack stack) {
-        NbtCompound nbt = stack.getOrCreateNbt();
+        NbtCompound nbt = stack.getNbt();
+        if (nbt == null) return List.of();
         NbtCompound blockEntityTag = nbt.contains("BlockEntityTag") ? nbt.getCompound("BlockEntityTag") : null;
         net.minecraft.nbt.NbtList itemsList = (blockEntityTag != null && blockEntityTag.contains("Items")) ? blockEntityTag.getList("Items", 10) : null;
         if (itemsList == null) return List.of();
 
-        List<ItemStack> slots = new ArrayList<>();
+        List<ItemStack> slots = new ArrayList<>(java.util.Collections.nCopies(27, ItemStack.EMPTY));
         for (int i = 0; i < itemsList.size(); i++) {
             NbtCompound itemTag = itemsList.getCompound(i);
+            int slot = getContainerSlot(itemTag, i);
+            if (slot < 0 || slot >= slots.size()) continue;
             ItemStack inner = ItemStack.fromNbt(itemTag);
-            if (!inner.isEmpty()) {
-                slots.add(inner);
-            } else {
-                slots.add(ItemStack.EMPTY);
-            }
+            slots.set(slot, inner.isEmpty() ? ItemStack.EMPTY : inner);
         }
         return slots;
+    }
+
+    private static int getContainerSlot(NbtCompound itemTag, int fallback) {
+        if (itemTag == null || !itemTag.contains("Slot", NbtElement.NUMBER_TYPE)) return fallback;
+        return itemTag.getByte("Slot") & 0xFF;
     }
 
     private static boolean isShulkerBox(ItemStack stack) {

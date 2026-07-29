@@ -251,10 +251,11 @@ public class AutoFillerStateMachine {
     private static ItemStack getContainerStackAt(NbtCompound blockEntityTag, int targetIndex) {
         if (blockEntityTag == null || targetIndex < 0) return ItemStack.EMPTY;
 
-        int index = 0;
-        for (ItemStack stack : containerStacksFromNbt(blockEntityTag)) {
-            if (index == targetIndex) return stack;
-            index++;
+        NbtList itemsList = blockEntityTag.getList("Items", 10);
+        for (int i = 0; i < itemsList.size(); i++) {
+            NbtCompound itemTag = itemsList.getCompound(i);
+            int slot = itemTag.contains("Slot") ? itemTag.getByte("Slot") & 0xFF : i;
+            if (slot == targetIndex) return ItemStack.fromNbt(itemTag);
         }
         return ItemStack.EMPTY;
     }
@@ -1670,8 +1671,11 @@ public class AutoFillerStateMachine {
                 NbtCompound component = shulker.getOrCreateSubNbt("BlockEntityTag");
                 if (component == null || !component.contains("Items")) continue;
 
-                int innerSlot = 0;
-                for (ItemStack inner : containerStacksFromNbt(component)) {
+                NbtList itemsList = component.getList("Items", 10);
+                for (int index = 0; index < itemsList.size(); index++) {
+                    NbtCompound itemTag = itemsList.getCompound(index);
+                    int innerSlot = itemTag.contains("Slot") ? itemTag.getByte("Slot") & 0xFF : index;
+                    ItemStack inner = ItemStack.fromNbt(itemTag);
                     if (ItemMatcher.isSameItem(inner, req) && inner.getCount() <= req.getCount() && inner.getCount() > bestCount) {
                         ItemStack requested = inner.copy();
                         requested.setCount(inner.getCount());
@@ -1679,7 +1683,6 @@ public class AutoFillerStateMachine {
                         bestCount = inner.getCount();
                         if (bestCount == req.getCount()) return best;
                     }
-                    innerSlot++;
                 }
             }
         }
@@ -2376,7 +2379,8 @@ public class AutoFillerStateMachine {
             debug(DebugCategory.FILL_TASK, "=== Task #{} completed at {} — total {}ms", debugTaskCount, completedPos.toShortString(), totalMs);
         }
 
-        RealContainerCache.putPredicted(completedPos, currentTask.requiredItems);
+        RealContainerCache.remove(completedPos);
+        RealContainerCache.requestContainerData(completedPos, 0L, true);
         failedContainers.remove(completedPos);
         missingMaterialMarkers.remove(completedPos);
         AreaScanner.clearAttemptCooldown(completedPos);

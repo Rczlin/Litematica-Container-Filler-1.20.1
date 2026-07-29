@@ -103,7 +103,8 @@ public class LitematicaContainerReader {
         BlockState state = schematicWorld.getBlockState(worldPos);
         BlockPos[] halves = getDoubleContainerHalves(schematicWorld, worldPos, state);
 
-        String schematicKey = findSchematicKeyForPosition(worldPos);
+        String schematicKey = LitematicaPlacementContainerData.getSchematicKey(worldPos);
+        if (schematicKey == null) schematicKey = findSchematicKeyForPosition(worldPos);
 
         if (halves != null) {
             Map<Integer, ItemStack> rightHalf = getSingleContainerItems(schematicWorld, halves[0]);
@@ -141,7 +142,8 @@ public class LitematicaContainerReader {
 
         BlockState state = schematicWorld.getBlockState(worldPos);
         BlockPos[] halves = getDoubleContainerHalves(schematicWorld, worldPos, state);
-        String schematicKey = findSchematicKeyForPosition(worldPos);
+        String schematicKey = LitematicaPlacementContainerData.getSchematicKey(worldPos);
+        if (schematicKey == null) schematicKey = findSchematicKeyForPosition(worldPos);
 
         if (halves != null) {
             Map<Integer, ItemStack> combined = RealContainerCache.combineDoubleContainerItems(

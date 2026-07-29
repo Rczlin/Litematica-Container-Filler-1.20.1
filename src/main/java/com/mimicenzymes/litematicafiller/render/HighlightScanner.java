@@ -19,10 +19,7 @@ import net.minecraft.util.math.BlockPos;
 import fi.dy.masa.malilib.util.LayerRange;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class HighlightScanner {
     private static final int NORMAL_UPDATE_INTERVAL_TICKS = 10;
@@ -49,11 +46,6 @@ public class HighlightScanner {
     private static volatile int highlightVersion = 0;
     private static HighlightFingerprint highlightFingerprint = HighlightFingerprint.empty();
     private static boolean highlightMapInitialized = false;
-    private static final ExecutorService INDEX_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "LitematicaFiller-HighlightScanner");
-        thread.setDaemon(true);
-        return thread;
-    });
     private static volatile Set<BlockPos> SCHEMATIC_CONTAINERS = Collections.emptySet();
     private static volatile Map<Long, Set<BlockPos>> SCHEMATIC_CONTAINER_BUCKETS = Collections.emptyMap();
     private static volatile long lastIndexTime = 0;
@@ -585,6 +577,9 @@ public class HighlightScanner {
             } else {
                 Set<Integer> ignoredSlots = getCachedIgnoredSlots(checkPos, client);
                 type = evaluateState(cached, required, ignoredSlots, isCrafter, crafterNeedsLocking);
+                if (!manualMarked) {
+                    queueHighlightRefresh(checkPos, requestIntervalFor(type, state), now);
+                }
             }
 
             if (!hasJob && type == HighlightState.SATISFIED) return null;
@@ -694,29 +689,28 @@ public class HighlightScanner {
         if (isIndexing || now - lastIndexTime <= 5000) return;
 
         isIndexing = true;
-        CompletableFuture.runAsync(() -> {
-            try {
-                if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
-                    return;
-                }
-
-                Set<BlockPos> found = LitematicaPlacementContainerData.rebuildIndex();
-                if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
-                    return;
-                }
-
-                if (!found.equals(SCHEMATIC_CONTAINERS)) {
-                    SCHEMATIC_REQ_CACHE.clear();
-                    SCHEMATIC_IGNORED_SLOT_CACHE.clear();
-                }
-                SCHEMATIC_CONTAINERS = found;
-                SCHEMATIC_CONTAINER_BUCKETS = buildContainerBuckets(found);
-            } catch (Exception e) {} finally {
-                lastIndexTime = System.currentTimeMillis();
-                invalidateNearbyBucketCache();
-                isIndexing = false;
+        try {
+            if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
+                return;
             }
-        }, INDEX_EXECUTOR);
+
+            Set<BlockPos> found = LitematicaPlacementContainerData.rebuildIndex();
+            if (!Configs.ENABLE_MOD.getBooleanValue() || !Configs.HIGHLIGHT_CONTAINERS.getBooleanValue()) {
+                return;
+            }
+
+            if (!found.equals(SCHEMATIC_CONTAINERS)) {
+                SCHEMATIC_REQ_CACHE.clear();
+                SCHEMATIC_IGNORED_SLOT_CACHE.clear();
+            }
+            SCHEMATIC_CONTAINERS = found;
+            SCHEMATIC_CONTAINER_BUCKETS = buildContainerBuckets(found);
+        } catch (Exception ignored) {
+        } finally {
+            lastIndexTime = System.currentTimeMillis();
+            invalidateNearbyBucketCache();
+            isIndexing = false;
+        }
     }
 
     private static void clearHighlights() {

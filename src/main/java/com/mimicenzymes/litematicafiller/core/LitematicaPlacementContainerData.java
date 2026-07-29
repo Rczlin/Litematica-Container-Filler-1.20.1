@@ -71,7 +71,7 @@ public class LitematicaPlacementContainerData {
                 LitematicaSchematic schematic = placement.getSchematic();
                 if (schematic == null) continue;
 
-                for (String regionName : placement.getSubRegionBoxes(RequiredEnabled.PLACEMENT_ENABLED).keySet()) {
+                for (String regionName : placement.getSubRegionBoxes(RequiredEnabled.RENDERING_ENABLED).keySet()) {
                     SubRegionPlacement regionPlacement = placement.getRelativeSubRegionPlacement(regionName);
                     LitematicaBlockStateContainer container = schematic.getSubRegionContainer(regionName);
                     Map<BlockPos, NbtCompound> regionBlockEntities = schematic.getBlockEntityMapForRegion(regionName);
