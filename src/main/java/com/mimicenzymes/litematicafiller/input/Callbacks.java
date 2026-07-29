@@ -121,7 +121,7 @@ public class Callbacks implements IHotkeyCallback {
             String value = Text.translatable(config.getBooleanValue()
                     ? "litematica_container_filler.gui.value.on"
                     : "litematica_container_filler.gui.value.off").getString();
-            mc.player.sendMessage(Text.literal(Text.translatable(config.getName()).getString() + ": " + value), true);
+            mc.player.sendMessage(Text.literal(config.getConfigGuiDisplayName() + ": " + value), true);
         }
     }
 

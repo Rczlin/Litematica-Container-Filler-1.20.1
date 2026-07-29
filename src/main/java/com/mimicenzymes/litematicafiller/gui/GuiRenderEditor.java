@@ -1621,7 +1621,7 @@ public class GuiRenderEditor extends GuiBase {
     }
 
     private String booleanLabel(ConfigBoolean config) {
-        return tr(config.getName()) + ": " + tr(config.getBooleanValue()
+        return config.getConfigGuiDisplayName() + ": " + tr(config.getBooleanValue()
                 ? "litematica_container_filler.gui.value.on"
                 : "litematica_container_filler.gui.value.off");
     }
@@ -1630,19 +1630,19 @@ public class GuiRenderEditor extends GuiBase {
         String value = config.getIntegerValue() == 0 && (config == Configs.TASK_MARKER_ANIMATION_FPS || config == Configs.TOOL_HUD_FRAME_RATE)
                 ? tr("litematica_container_filler.gui.value.unlimited")
                 : Integer.toString(config.getIntegerValue());
-        return tr(config.getName()) + ": " + value;
+        return config.getConfigGuiDisplayName() + ": " + value;
     }
 
     private String doubleLabel(ConfigDouble config) {
-        return tr(config.getName()) + ": " + String.format(java.util.Locale.ROOT, "%.2f", config.getDoubleValue());
+        return config.getConfigGuiDisplayName() + ": " + String.format(java.util.Locale.ROOT, "%.2f", config.getDoubleValue());
     }
 
     private String colorLabel(ConfigColor config) {
-        return tr(config.getName()) + ": " + config.getStringValue();
+        return config.getConfigGuiDisplayName() + ": " + config.getStringValue();
     }
 
     private String optionLabel(ConfigOptionList config) {
-        return tr(config.getName()) + ": " + config.getOptionListValue().getDisplayName();
+        return config.getConfigGuiDisplayName() + ": " + config.getOptionListValue().getDisplayName();
     }
 
     private String fit(String text, int maxChars) {
